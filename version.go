@@ -1,3 +1,3 @@
-package version
+package main
 
 const CLIVersion = "dev"
