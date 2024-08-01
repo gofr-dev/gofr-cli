@@ -2,9 +2,10 @@ package project
 
 import (
 	"fmt"
-	"gofr.dev/pkg/gofr"
-	"html/template"
 	"os"
+	"text/template"
+
+	"gofr.dev/pkg/gofr"
 )
 
 const (
@@ -68,7 +69,7 @@ func Create(ctx *gofr.Context) (interface{}, error) {
 		return nil, err
 	}
 
-	_, err = mainFile.Write([]byte(mainContent))
+	_, err = mainFile.WriteString(mainContent)
 	if err != nil {
 		return nil, err
 	}

@@ -1,8 +1,9 @@
 package main
 
 import (
-	"gofr.dev/gofr-cli/project"
 	"gofr.dev/pkg/gofr"
+
+	"gofr.dev/gofr-cli/project"
 )
 
 func main() {
