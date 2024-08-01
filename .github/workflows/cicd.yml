@@ -1,0 +1,66 @@
+name: CI-CD
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+      - development
+
+jobs:
+  unit-testing:
+    name: 🧪 unit testing
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.22', '1.21']
+
+    steps:
+      - name: Checkout code into go module directory
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+        id: Go
+
+      - name: Get dependencies
+        run: |
+          go mod download
+          go mod tidy
+
+      - name: Test
+        run: |
+          export APP_ENV=test
+          go test ./... -v -coverprofile profile.cov -coverpkg=./...
+          go tool cover -func profile.cov
+
+      - name: Parse code-coverage value
+        run: |
+          codeCoverage=$(go tool cover -func=profile.cov | grep total | awk '{print $3}')
+          codeCoverage=${codeCoverage%?}
+          echo $codeCoverage:
+
+  code_quality:
+    name: 🎖Code Quality️
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Go 1.22
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.22
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59.1
+          args: --timeout=9m
