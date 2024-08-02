@@ -9,12 +9,7 @@ import (
 )
 
 func Test_Main_Version(t *testing.T) {
-	old := os.Args
-	os.Args = []string{"gofr-cli", "version"}
-
-	t.Cleanup(func() {
-		os.Args = old
-	})
+	setArgs(t, "version")
 
 	// test util replaces the stdout with a buffer and returns us
 	// any output that is printed on the stdout
@@ -25,6 +20,14 @@ func Test_Main_Version(t *testing.T) {
 	assert.Contains(t, out, "dev")
 }
 
-func Test_Main_init(t *testing.T) {
+func setArgs(t *testing.T, args ...string) {
+	t.Helper()
 
+	old := os.Args
+
+	os.Args = append([]string{"gofr-cli"}, args...)
+
+	t.Cleanup(func() {
+		os.Args = old
+	})
 }
