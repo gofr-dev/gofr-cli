@@ -1,4 +1,4 @@
-package project
+package bootstrap
 
 import (
 	"fmt"
