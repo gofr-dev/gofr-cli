@@ -19,6 +19,7 @@ var (
 	errNameEmpty = errors.New(`please provide the name of the migration using "-name" option`)
 )
 
+//nolint:gochecknoglobals // keeping them local so that they are computed at the compile time.
 var (
 	allTemplate = template.Must(template.New("allContent").Parse(
 		`// This is auto-generated file using 'gofr migrate' tool. DO NOT EDIT.
