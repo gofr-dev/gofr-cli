@@ -9,9 +9,11 @@ import (
 func main() {
 	cli := gofr.NewCMD()
 
-	cli.SubCommand("version", func(*gofr.Context) (interface{}, error) {
-		return CLIVersion, nil
-	})
+	cli.SubCommand("version",
+		func(*gofr.Context) (interface{}, error) {
+			return CLIVersion, nil
+		},
+	)
 
 	cli.SubCommand("migrate create", migration.Migrate)
 
