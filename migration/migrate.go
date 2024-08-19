@@ -2,6 +2,7 @@ package migration
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"text/template"
@@ -64,14 +65,14 @@ func Migrate(ctx *gofr.Context) (interface{}, error) {
 	}
 
 	if err := createMigrationFile(ctx, migName); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error while creating migration file, err: %w", err)
 	}
 
 	if err := createAllMigration(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error while creating all.go file, err: %w", err)
 	}
 
-	return "Successfully created migration " + migName, nil
+	return fmt.Sprintf("Successfully created migration %v", migName), nil
 }
 
 func createMigrationFile(ctx *gofr.Context, migrationName string) error {
