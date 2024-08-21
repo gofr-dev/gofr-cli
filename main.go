@@ -2,6 +2,8 @@ package main
 
 import (
 	"gofr.dev/pkg/gofr"
+
+	"gofr.dev/gofr-cli/migration"
 )
 
 func main() {
@@ -12,6 +14,8 @@ func main() {
 			return CLIVersion, nil
 		},
 	)
+
+	cli.SubCommand("migrate create", migration.Migrate)
 
 	cli.Run()
 }
