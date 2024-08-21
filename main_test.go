@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 	"gofr.dev/pkg/gofr/testutil"
 )
 
@@ -23,11 +24,11 @@ func Test_Main_Version(t *testing.T) {
 func setArgs(t *testing.T, args ...string) {
 	t.Helper()
 
-	old := os.Args
+	oldArgs := os.Args
 
 	os.Args = append([]string{"gofr-cli"}, args...)
 
 	t.Cleanup(func() {
-		os.Args = old
+		os.Args = oldArgs
 	})
 }

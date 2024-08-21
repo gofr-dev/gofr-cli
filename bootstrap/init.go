@@ -44,7 +44,7 @@ func Create(ctx *gofr.Context) (interface{}, error) {
 	gofrVersion := ctx.Param("gofr")
 
 	if gofrVersion == "" {
-		gofrVersion = "1.15.0"
+		gofrVersion = "1.17.0"
 	}
 
 	modFile, err := os.OpenFile("go.mod", os.O_CREATE|os.O_WRONLY, fileMode)
