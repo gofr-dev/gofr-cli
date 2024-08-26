@@ -5,16 +5,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 	"gofr.dev/pkg/gofr/testutil"
 )
 
 func Test_Main_Version(t *testing.T) {
-	old := os.Args
-	os.Args = []string{"gofr-cli", "version"}
-
-	t.Cleanup(func() {
-		os.Args = old
-	})
+	setArgs(t, "version")
 
 	// test util replaces the stdout with a buffer and returns us
 	// any output that is printed on the stdout
@@ -23,4 +19,16 @@ func Test_Main_Version(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "dev")
+}
+
+func setArgs(t *testing.T, args ...string) {
+	t.Helper()
+
+	oldArgs := os.Args
+
+	os.Args = append([]string{"gofr-cli"}, args...)
+
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
 }
