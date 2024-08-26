@@ -1,4 +1,4 @@
-module github.com/gofr-dev/gofr-cli
+module gofr.dev/cli/gofr
 
 go 1.22
 

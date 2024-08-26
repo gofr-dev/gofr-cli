@@ -3,8 +3,8 @@ package main
 import (
 	"gofr.dev/pkg/gofr"
 
-	"github.com/gofr-dev/gofr-cli/bootstrap"
-	"github.com/gofr-dev/gofr-cli/migration"
+	"gofr.dev/cli/gofr/bootstrap"
+	"gofr.dev/cli/gofr/migration"
 )
 
 func main() {
