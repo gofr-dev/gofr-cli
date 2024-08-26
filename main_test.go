@@ -18,7 +18,7 @@ func Test_Main_Version(t *testing.T) {
 		main()
 	})
 
-	assert.Contains(t, out, "dev")
+	assert.Contains(t, out, CLIVersion)
 }
 
 func setArgs(t *testing.T, args ...string) {
