@@ -136,7 +136,7 @@ func findMigrations(files []os.DirEntry) map[string]string {
 			continue
 		}
 
-		existingMig[fileParts[0]] = strings.TrimSuffix(fileParts[1], ".go")
+		existingMig[fileParts[0]] = strings.TrimSuffix(strings.Join(fileParts[1:], "_"), ".go")
 	}
 
 	return existingMig
