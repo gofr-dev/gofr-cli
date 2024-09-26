@@ -73,6 +73,7 @@ func Create(ctx *gofr.Context) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	err = createEnvFiles(ctx)
 	if err != nil {
 		return nil, err
