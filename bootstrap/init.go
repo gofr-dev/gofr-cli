@@ -73,6 +73,33 @@ func Create(ctx *gofr.Context) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = createEnvFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	return "Successfully initialized project " + name, nil
+}
+
+func createEnvFiles(ctx *gofr.Context) error {
+	var envFiles = []string{".env", ".test.env"}
+
+	err := ctx.File.Mkdir("configs", os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	err = ctx.File.ChDir("configs")
+	if err != nil {
+		return err
+	}
+
+	for _, fileName := range envFiles {
+		_, err = ctx.File.Create(fileName)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
