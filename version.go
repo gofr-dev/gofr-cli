@@ -1,4 +1,4 @@
 package main
 
 // CLIVersion is a constant that defines the current version of the CLI application.
-const CLIVersion = "v0.1.0"
+const CLIVersion = "v0.2.0"
