@@ -5,6 +5,7 @@ import (
 
 	"gofr.dev/cli/gofr/bootstrap"
 	"gofr.dev/cli/gofr/migration"
+	"gofr.dev/cli/gofr/wrap"
 )
 
 func main() {
@@ -19,6 +20,8 @@ func main() {
 	)
 
 	cli.SubCommand("migrate create", migration.Migrate)
+
+	cli.SubCommand("wrap grpc", wrap.GenerateWrapper)
 
 	cli.Run()
 }
