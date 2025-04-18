@@ -21,35 +21,35 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-// New{{ .Service }}GoFrServer creates a new instance of {{ .Service }}GoFrServer
-func New{{ .Service }}GoFrServer() *{{ .Service }}GoFrServer {
-	return &{{ .Service }}GoFrServer{
+// New{{ .Service }}GoFrService creates a new instance of {{ .Service }}GoFrService
+func New{{ .Service }}GoFrService() *{{ .Service }}GoFrService {
+	return &{{ .Service }}GoFrService{
 		health: getOrCreateHealthServer(), // Initialize the health server
 	}
 }
 
-// {{ .Service }}ServerWithGofr is the interface for the server implementation
-type {{ .Service }}ServerWithGofr interface {
+// {{ .Service }}ServiceWithGofr is the interface for the service implementation
+type {{ .Service }}ServiceWithGofr interface {
 	{{- range .Methods }}
 	{{ .Name }}(*gofr.Context) (any, error)
 	{{- end }}
 }
 
-// {{ .Service }}ServerWrapper wraps the server and handles request and response logic
-type {{ .Service }}ServerWrapper struct {
+// {{ .Service }}ServiceWrapper wraps the service and handles request and response logic
+type {{ .Service }}ServiceWrapper struct {
 	{{ .Service }}Server
 	*healthServer
 	Container *container.Container
-	server    {{ .Service }}ServerWithGofr
+	service   {{ .Service }}ServiceWithGofr
 }
 
 // {{- range .Methods }}
 {{- if not .Streaming }}
 // {{ .Name }} wraps the method and handles its execution
-func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(ctx context.Context, req *{{ .Request }}) (*{{ .Response }}, error) {
+func (h *{{ $.Service }}ServiceWrapper) {{ .Name }}(ctx context.Context, req *{{ .Request }}) (*{{ .Response }}, error) {
 	gctx := h.getGofrContext(ctx, &{{ .Request }}Wrapper{ctx: ctx, {{ .Request }}: req})
 
-	res, err := h.server.{{ .Name }}(gctx)
+	res, err := h.service.{{ .Name }}(gctx)
 	if err != nil {
 		return nil, err
 	}
@@ -64,20 +64,20 @@ func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(ctx context.Context, req *{{ 
 {{- end }}
 {{- end }}
 
-// mustEmbedUnimplemented{{ .Service }}Server ensures that the server implements all required methods
-func (h *{{ .Service }}ServerWrapper) mustEmbedUnimplemented{{ .Service }}Server() {}
+// mustEmbedUnimplemented{{ .Service }}Server ensures that the service implements all required methods
+func (h *{{ .Service }}ServiceWrapper) mustEmbedUnimplemented{{ .Service }}Server() {}
 
-// Register{{ .Service }}ServerWithGofr registers the server with the application
-func Register{{ .Service }}ServerWithGofr(app *gofr.App, srv {{ .Service }}ServerWithGofr) {
+// Register{{ .Service }}ServiceWithGofr registers the service with the application
+func Register{{ .Service }}ServiceWithGofr(app *gofr.App, srv {{ .Service }}ServiceWithGofr) {
 	registerServerWithGofr(app, srv, func(s grpc.ServiceRegistrar, srv any) {
-		wrapper := &{{ .Service }}ServerWrapper{server: srv.({{ .Service }}ServerWithGofr), healthServer: getOrCreateHealthServer()}
+		wrapper := &{{ .Service }}ServiceWrapper{service: srv.({{ .Service }}ServiceWithGofr), healthServer: getOrCreateHealthServer()}
 		Register{{ .Service }}Server(s, wrapper)
 		wrapper.Server.SetServingStatus("{{ .Service }}", healthpb.HealthCheckResponse_SERVING)
 	})
 }
 
 // getGofrContext extracts the GoFr context from the original context
-func (h *{{ .Service }}ServerWrapper) getGofrContext(ctx context.Context, req gofr.Request) *gofr.Context {
+func (h *{{ .Service }}ServiceWrapper) getGofrContext(ctx context.Context, req gofr.Request) *gofr.Context {
 	return &gofr.Context{
 		Context:   ctx,
 		Container: h.Container,
