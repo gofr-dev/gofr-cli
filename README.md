@@ -8,6 +8,8 @@
 
 
 <div align="center">
+<a href="https://pkg.go.dev/gofr.dev/cli/gofr"><img src="https://img.shields.io/badge/GoDoc-Read%20Documentation-blue?style=for-the-badge" alt="godoc"></a>
+<a href="https://gofr.dev/docs/references/gofrcli"><img src="https://img.shields.io/badge/GoFr-Docs-orange?style=for-the-badge" alt="gofr-docs"></a>
 <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge" alt="Apache 2.0 License"></a>
 <a href="https://discord.gg/wsaSkQTdgq"><img src="https://img.shields.io/badge/discord-join-us?style=for-the-badge&logo=discord&color=7289DA" alt="discord" /></a>
 </div>
