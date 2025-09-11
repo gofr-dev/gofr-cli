@@ -39,7 +39,7 @@ type modInfo struct {
 	GofrVersion string
 }
 
-func Create(ctx *gofr.Context) (interface{}, error) {
+func Create(ctx *gofr.Context) (any, error) {
 	name := ctx.Param("name")
 	gofrVersion := ctx.Param("gofr")
 

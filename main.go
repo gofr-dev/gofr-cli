@@ -14,7 +14,7 @@ func main() {
 	cli.SubCommand("init", bootstrap.Create)
 
 	cli.SubCommand("version",
-		func(*gofr.Context) (interface{}, error) {
+		func(*gofr.Context) (any, error) {
 			return CLIVersion, nil
 		},
 	)

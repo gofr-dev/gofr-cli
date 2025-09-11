@@ -58,7 +58,7 @@ func {{ . }}() migration.Migrate {
 `))
 )
 
-func Migrate(ctx *gofr.Context) (interface{}, error) {
+func Migrate(ctx *gofr.Context) (any, error) {
 	migName := ctx.Param("name")
 	if migName == "" {
 		return nil, errNameEmpty

@@ -230,11 +230,14 @@ func executeTemplate(ctx *gofr.Context, data *WrapperData, tmpl string) string {
 	}
 
 	tmplInstance := template.Must(template.New("template").Funcs(funcMap).Parse(tmpl))
+
 	var buf bytes.Buffer
+
 	if err := tmplInstance.Execute(&buf, data); err != nil {
 		ctx.Logger.Errorf("Template execution failed: %v", err)
 		return ""
 	}
+
 	return buf.String()
 }
 
