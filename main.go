@@ -5,6 +5,7 @@ import (
 
 	"gofr.dev/cli/gofr/bootstrap"
 	"gofr.dev/cli/gofr/migration"
+	"gofr.dev/cli/gofr/store"
 	"gofr.dev/cli/gofr/wrap"
 )
 
@@ -24,6 +25,10 @@ func main() {
 	cli.SubCommand("wrap grpc server", wrap.BuildGRPCGoFrServer)
 
 	cli.SubCommand("wrap grpc client", wrap.BuildGRPCGoFrClient)
+
+	cli.SubCommand("store init", store.InitStore)
+
+	cli.SubCommand("store generate", store.GenerateStore)
 
 	cli.Run()
 }
