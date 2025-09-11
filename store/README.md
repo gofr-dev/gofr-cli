@@ -120,7 +120,7 @@ stores:
             type: "int64"
 ```
 
-### Legacy Single Store Structure (Still Supported)
+### Single Store Structure 
 
 ```yaml
 version: "1.0"
