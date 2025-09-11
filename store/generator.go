@@ -17,35 +17,39 @@ const (
 )
 
 var (
-	ErrNoConfigFile     = errors.New("config file path is required")
-	ErrOpeningConfigFile = errors.New("error opening the config file")
-	ErrFailedToParseConfig = errors.New("failed to parse config file")
-	ErrGeneratingStore  = errors.New("error while generating the store code")
-	ErrWritingFile      = errors.New("error writing the generated code to the file")
+	errNoConfigFile        = errors.New("config file path is required")
+	errOpeningConfigFile   = errors.New("error opening the config file")
+	errFailedToParseConfig = errors.New("failed to parse config file")
+	errGeneratingStore     = errors.New("error while generating the store code")
+	errWritingFile         = errors.New("error writing the generated code to the file")
 )
 
 // StoreConfig represents the YAML configuration for store generation
 type StoreConfig struct {
-	Version string     `yaml:"version"`
-	Store   StoreInfo  `yaml:"store"`
-	Models  []Model    `yaml:"models"`
-	Queries []Query    `yaml:"queries"`
+	Version string      `yaml:"version"`
+	Stores  []StoreInfo `yaml:"stores"`
+	Models  []Model     `yaml:"models"`
+	// Legacy support for single store
+	Store   StoreInfo `yaml:"store,omitempty"`
+	Queries []Query   `yaml:"queries,omitempty"`
 }
 
 // StoreInfo contains store-level configuration
 type StoreInfo struct {
-	Package     string `yaml:"package"`
-	OutputDir   string `yaml:"output_dir"`
-	Interface   string `yaml:"interface"`
-	Implementation string `yaml:"implementation"`
+	Name           string  `yaml:"name"`
+	Package        string  `yaml:"package"`
+	OutputDir      string  `yaml:"output_dir"`
+	Interface      string  `yaml:"interface"`
+	Implementation string  `yaml:"implementation"`
+	Queries        []Query `yaml:"queries"`
 }
 
 // Model represents a data model
 type Model struct {
-	Name   string `yaml:"name"`
-	Fields []Field `yaml:"fields,omitempty"`
-	Path   string `yaml:"path,omitempty"` // Path to existing model file
-	Package string `yaml:"package,omitempty"` // Package name for imported model
+	Name    string  `yaml:"name"`
+	Fields  []Field `yaml:"fields,omitempty"`
+	Path    string  `yaml:"path,omitempty"`    // Path to existing model file
+	Package string  `yaml:"package,omitempty"` // Package name for imported model
 }
 
 // Field represents a model field
@@ -66,7 +70,7 @@ type Query struct {
 	Returns     string            `yaml:"returns,omitempty"` // single, multiple, count, health
 	Description string            `yaml:"description,omitempty"`
 	Tags        map[string]string `yaml:"tags,omitempty"`
-	UseSelect   bool              `yaml:"use_select,omitempty"` // Use GoFr's Select method
+	UseSelect   bool              `yaml:"use_select,omitempty"`  // Use GoFr's Select method
 	Transaction bool              `yaml:"transaction,omitempty"` // Wrap in transaction
 }
 
@@ -132,29 +136,22 @@ func GenerateStore(ctx *gofr.Context) (interface{}, error) {
 		return nil, err
 	}
 
-	outputDir := config.Store.OutputDir
-	if outputDir == "" {
-		outputDir = "stores"
+	// Handle legacy single store configuration
+	if len(config.Stores) == 0 && config.Store.Package != "" {
+		// Convert legacy config to new format
+		config.Stores = []StoreInfo{config.Store}
+		config.Stores[0].Queries = config.Queries
 	}
 
-	// Create output directory if it doesn't exist
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create output directory: %w", err)
+	if len(config.Stores) == 0 {
+		return nil, fmt.Errorf("no stores defined in configuration")
 	}
 
-	// Generate interface file
-	if err := generateInterface(ctx, config, outputDir); err != nil {
-		return nil, fmt.Errorf("failed to generate interface: %w", err)
-	}
-
-	// Generate implementation file
-	if err := generateImplementation(ctx, config, outputDir); err != nil {
-		return nil, fmt.Errorf("failed to generate implementation: %w", err)
-	}
-
-	// Generate model files
-	if err := generateModels(ctx, config, outputDir); err != nil {
-		return nil, fmt.Errorf("failed to generate models: %w", err)
+	// Generate each store
+	for _, store := range config.Stores {
+		if err := generateSingleStore(ctx, config, store); err != nil {
+			return nil, fmt.Errorf("failed to generate store %s: %w", store.Name, err)
+		}
 	}
 
 	ctx.Logger.Info("Successfully generated store layer files")
@@ -162,12 +159,56 @@ func GenerateStore(ctx *gofr.Context) (interface{}, error) {
 	return "Successfully generated store layer files", nil
 }
 
+// generateSingleStore generates a single store
+func generateSingleStore(ctx *gofr.Context, config *StoreConfig, store StoreInfo) error {
+	outputDir := store.OutputDir
+	if outputDir == "" {
+		outputDir = fmt.Sprintf("stores/%s", store.Name)
+	}
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Create a store-specific config for this store
+	storeConfig := &StoreConfig{
+		Version: config.Version,
+		Models:  config.Models,
+		Store: StoreInfo{
+			Package:        store.Package,
+			OutputDir:      outputDir,
+			Interface:      store.Interface,
+			Implementation: store.Implementation,
+		},
+		Queries: store.Queries,
+	}
+
+	// Generate interface file
+	if err := generateInterface(ctx, storeConfig, outputDir); err != nil {
+		return fmt.Errorf("failed to generate interface: %w", err)
+	}
+
+	// Generate implementation file
+	if err := generateImplementation(ctx, storeConfig, outputDir); err != nil {
+		return fmt.Errorf("failed to generate implementation: %w", err)
+	}
+
+	// Generate model files
+	if err := generateModels(ctx, storeConfig, outputDir); err != nil {
+		return fmt.Errorf("failed to generate models: %w", err)
+	}
+
+	ctx.Logger.Infof("Generated store: %s in %s", store.Name, outputDir)
+	return nil
+}
+
 // parseConfigFile opens and parses the YAML config file
 func parseConfigFile(ctx *gofr.Context, configPath string) (*StoreConfig, error) {
 	file, err := os.Open(configPath)
 	if err != nil {
 		ctx.Logger.Errorf("Failed to open config file: %v", err)
-		return nil, ErrOpeningConfigFile
+		return nil, errOpeningConfigFile
 	}
 	defer file.Close()
 
@@ -175,7 +216,7 @@ func parseConfigFile(ctx *gofr.Context, configPath string) (*StoreConfig, error)
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		ctx.Logger.Errorf("Failed to parse config file: %v", err)
-		return nil, ErrFailedToParseConfig
+		return nil, errFailedToParseConfig
 	}
 
 	// Set defaults
@@ -197,9 +238,12 @@ func collectImports(config *StoreConfig) []string {
 	imports := []string{"gofr.dev/pkg/gofr"}
 	importMap := make(map[string]bool)
 	
-	// Add imports for models that have external paths
+	// Get models used by this specific store
+	usedModels := getModelsUsedByStore(config)
+	
+	// Add imports for models that have external paths and are used by this store
 	for _, model := range config.Models {
-		if model.Path != "" && model.Package != "" {
+		if model.Path != "" && model.Package != "" && usedModels[model.Name] {
 			if !importMap[model.Package] {
 				imports = append(imports, model.Package)
 				importMap[model.Package] = true
@@ -210,11 +254,25 @@ func collectImports(config *StoreConfig) []string {
 	return imports
 }
 
+// getModelsUsedByStore returns a map of model names that are used by the current store
+func getModelsUsedByStore(config *StoreConfig) map[string]bool {
+	usedModels := make(map[string]bool)
+	
+	// Check all queries in the current store
+	for _, query := range config.Queries {
+		if query.Model != "" {
+			usedModels[query.Model] = true
+		}
+	}
+	
+	return usedModels
+}
+
 // generateInterface generates the store interface file
 func generateInterface(ctx *gofr.Context, config *StoreConfig, outputDir string) error {
 	interfaceFile := filepath.Join(outputDir, "interface.go")
 	imports := collectImports(config)
-	
+
 	tmpl := `// Code generated by gofr.dev/cli/gofr. DO NOT EDIT.
 package {{ .Store.Package }}
 
@@ -273,7 +331,7 @@ type {{ .Store.Interface }} interface {
 func generateImplementation(ctx *gofr.Context, config *StoreConfig, outputDir string) error {
 	implFile := filepath.Join(outputDir, fmt.Sprintf("%s.go", config.Store.Implementation))
 	imports := collectImports(config)
-	
+
 	tmpl := `// Code generated by gofr.dev/cli/gofr. DO NOT EDIT.
 package {{ .Store.Package }}
 
@@ -375,7 +433,15 @@ func (s *{{ $.Store.Implementation }}) {{ .Name }}(ctx *gofr.Context{{range .Par
 
 // generateModels generates model files or references existing ones
 func generateModels(ctx *gofr.Context, config *StoreConfig, outputDir string) error {
+	// Get models used by this specific store
+	usedModels := getModelsUsedByStore(config)
+	
 	for _, model := range config.Models {
+		// Only generate models that are actually used by this store
+		if !usedModels[model.Name] {
+			continue
+		}
+		
 		// If model has a path, it's referencing an existing model file
 		if model.Path != "" {
 			ctx.Logger.Infof("Referencing existing model: %s from %s", model.Name, model.Path)
@@ -384,7 +450,7 @@ func generateModels(ctx *gofr.Context, config *StoreConfig, outputDir string) er
 		
 		// Generate new model file only if no path is specified
 		modelFile := filepath.Join(outputDir, fmt.Sprintf("%s.go", strings.ToLower(model.Name)))
-		
+
 		tmpl := `// Code generated by gofr.dev/cli/gofr. DO NOT EDIT.
 package {{ $.Store.Package }}
 
@@ -433,15 +499,10 @@ func ({{ .Name }}) TableName() string {
 // generateStoreConfig creates the initial store.yaml configuration file
 func generateStoreConfig(ctx *gofr.Context, storeName, storeDir string) error {
 	configFile := filepath.Join(storeDir, "store.yaml")
-	
+
 	tmpl := `version: "1.0"
 
-store:
-  package: "{{ .PackageName }}"
-  output_dir: "{{ .OutputDir }}"
-  interface: "{{ .InterfaceName }}"
-  implementation: "{{ .ImplementationName }}"
-
+# Shared models across all stores
 models:
   # Define your models here
   # Option 1: Generate new model struct
@@ -459,18 +520,38 @@ models:
   #   path: "models/user.go"
   #   package: "test-store-project/models"
 
-queries:
-  # Define your queries here
-  # Example:
-  # - name: "GetUserByID"
-  #   sql: "SELECT id, name FROM users WHERE id = ?"
-  #   type: "select"
-  #   model: "User"
-  #   returns: "single"
-  #   params:
-  #     - name: "id"
-  #       type: "int64"
-  #   description: "Retrieves a user by their ID"
+# Multiple stores configuration
+stores:
+  - name: "{{ .PackageName }}"
+    package: "{{ .PackageName }}"
+    output_dir: "{{ .OutputDir }}"
+    interface: "{{ .InterfaceName }}"
+    implementation: "{{ .ImplementationName }}"
+    queries:
+      # Define your queries here
+      # Example:
+      # - name: "GetUserByID"
+      #   sql: "SELECT id, name FROM users WHERE id = ?"
+      #   type: "select"
+      #   model: "User"
+      #   returns: "single"
+      #   params:
+      #     - name: "id"
+      #       type: "int64"
+      #   description: "Retrieves a user by their ID"
+
+# Legacy single store format (still supported)
+# store:
+#   package: "{{ .PackageName }}"
+#   output_dir: "{{ .OutputDir }}"
+#   interface: "{{ .InterfaceName }}"
+#   implementation: "{{ .ImplementationName }}"
+# queries:
+#   - name: "GetUserByID"
+#     sql: "SELECT id, name FROM users WHERE id = ?"
+#     type: "select"
+#     model: "User"
+#     returns: "single"
 `
 
 	t, err := template.New("config").Parse(tmpl)
@@ -507,7 +588,7 @@ queries:
 // generateInitialInterface creates the initial interface.go file
 func generateInitialInterface(ctx *gofr.Context, storeName, storeDir string) error {
 	interfaceFile := filepath.Join(storeDir, "interface.go")
-	
+
 	tmpl := `// Code generated by gofr.dev/cli/gofr. DO NOT EDIT.
 package {{ .PackageName }}
 
@@ -555,7 +636,7 @@ type {{ .InterfaceName }} interface {
 // generateInitialStore creates the initial store.go file
 func generateInitialStore(ctx *gofr.Context, storeName, storeDir string) error {
 	storeFile := filepath.Join(storeDir, fmt.Sprintf("%s.go", strings.ToLower(storeName)))
-	
+
 	tmpl := `// Code generated by gofr.dev/cli/gofr. DO NOT EDIT.
 package {{ .PackageName }}
 
@@ -595,9 +676,9 @@ func New{{ .InterfaceName }}() {{ .InterfaceName }} {
 	defer file.Close()
 
 	data := struct {
-		PackageName      string
+		PackageName        string
 		ImplementationName string
-		InterfaceName    string
+		InterfaceName      string
 	}{
 		PackageName:        strings.ToLower(storeName),
 		ImplementationName: strings.ToLower(storeName),
@@ -615,7 +696,7 @@ func New{{ .InterfaceName }}() {{ .InterfaceName }} {
 // generateAllStore creates the all.go file similar to migrations
 func generateAllStore(ctx *gofr.Context, storeName, storeDir string) error {
 	allFile := filepath.Join(storeDir, "all.go")
-	
+
 	tmpl := `// Code generated by gofr.dev/cli/gofr. DO NOT EDIT.
 package {{ .PackageName }}
 
