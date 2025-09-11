@@ -48,7 +48,7 @@ jobs:
           echo $codeCoverage:
 
   code_quality:
-    name: 🎖Code Quality️
+    name: 🎖 Code Quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -59,10 +59,15 @@ jobs:
         with:
           go-version: 1.22
 
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.59.1
-          args: --timeout=9m --verbose
-        env:
-          GOFLAGS: "-buildvcs=false" # Fix Go 1.22 VCS warnings
+      - name: Install golangci-lint v2
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b $HOME/go/bin v2.4.0
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Verify golangci-lint version
+        run: golangci-lint --version
+
+      - name: Run golangci-lint
+        run: golangci-lint run --timeout=9m --verbose
+
