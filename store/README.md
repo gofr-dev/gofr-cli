@@ -69,141 +69,6 @@ gofr store generate
 
 ## Integration with GoFr Application
 
-### Setting Up Store Generator in main.go
-
-To integrate the store generator commands with your GoFr application, add the following to your `main.go`:
-
-```go
-package main
-
-import (
-    "gofr.dev/pkg/gofr"
-    "gofr.dev/pkg/gofr/cmd"
-    
-    // Import your store generator package
-    "your-project/store"  // Update this to match your project structure
-)
-
-func main() {
-    // Initialize the GoFr application
-    app := gofr.New()
-
-    // Register store generator commands
-    app.SubCommand("store", func(c *cmd.Context) (interface{}, error) {
-        subCmd := c.Param("subcommand")
-        
-        switch subCmd {
-        case "init":
-            return store.InitStore(c.Context)
-        case "generate":
-            return store.GenerateStore(c.Context)
-        default:
-            return nil, fmt.Errorf("unknown store subcommand: %s. Available: init, generate", subCmd)
-        }
-    })
-
-    // Your other application routes and logic
-    app.GET("/health", func(ctx *gofr.Context) (interface{}, error) {
-        return "OK", nil
-    })
-
-    // Start the application
-    app.Start()
-}
-```
-
-### Alternative: Separate CLI Tool
-
-For a dedicated CLI tool approach, create a separate `cli/main.go`:
-
-```go
-package main
-
-import (
-    "fmt"
-    "os"
-    
-    "gofr.dev/pkg/gofr"
-    "gofr.dev/pkg/gofr/cmd"
-    
-    // Import your store generator package
-    "your-project/store"
-)
-
-func main() {
-    // Initialize GoFr for CLI usage
-    app := gofr.New()
-
-    // Handle store commands
-    args := os.Args
-    if len(args) < 2 {
-        fmt.Println("Usage: cli store <command> [options]")
-        fmt.Println("Commands:")
-        fmt.Println("  init -name=<store_name>")
-        fmt.Println("  generate -config=<config_file>")
-        os.Exit(1)
-    }
-
-    if args[1] == "store" {
-        if len(args) < 3 {
-            fmt.Println("Please specify a store command: init or generate")
-            os.Exit(1)
-        }
-
-        // Create a context with command line arguments
-        ctx := &gofr.Context{
-            // Set up context with CLI parameters
-        }
-
-        // Parse command line arguments
-        params := make(map[string]string)
-        for _, arg := range args[3:] {
-            if strings.HasPrefix(arg, "-") {
-                parts := strings.SplitN(arg[1:], "=", 2)
-                if len(parts) == 2 {
-                    params[parts[0]] = parts[1]
-                }
-            }
-        }
-
-        // Simulate GoFr context for CLI usage
-        ctx.Request = &http.Request{
-            URL: &url.URL{
-                RawQuery: buildQueryString(params),
-            },
-        }
-
-        var result interface{}
-        var err error
-
-        switch args[2] {
-        case "init":
-            result, err = store.InitStore(ctx)
-        case "generate":
-            result, err = store.GenerateStore(ctx)
-        default:
-            fmt.Printf("Unknown command: %s\n", args[2])
-            os.Exit(1)
-        }
-
-        if err != nil {
-            fmt.Printf("Error: %v\n", err)
-            os.Exit(1)
-        }
-
-        fmt.Println(result)
-    }
-}
-
-func buildQueryString(params map[string]string) string {
-    var query []string
-    for key, value := range params {
-        query = append(query, fmt.Sprintf("%s=%s", key, value))
-    }
-    return strings.Join(query, "&")
-}
-```
-
 ### Using Generated Stores in Your Application
 
 Once you've generated your stores, integrate them into your GoFr application:
@@ -270,63 +135,6 @@ func main() {
 }
 ```
 
-### Dependency Injection Pattern
-
-For more advanced dependency injection, you can use the store registry:
-
-```go
-package main
-
-import (
-    "gofr.dev/pkg/gofr"
-    "your-project/stores"
-)
-
-type Services struct {
-    UserStore    interface{}
-    ProductStore interface{}
-    // Add more stores as needed
-}
-
-func main() {
-    app := gofr.New()
-
-    // Initialize all stores from registry
-    storeRegistry := stores.All()
-    
-    // Create services container
-    services := &Services{
-        UserStore:    storeRegistry["user"](),
-        ProductStore: storeRegistry["product"](),
-    }
-
-    // Set up handlers with dependency injection
-    setupRoutes(app, services)
-
-    app.Start()
-}
-
-func setupRoutes(app *gofr.Gofr, services *Services) {
-    // User routes
-    app.GET("/users/{id}", func(ctx *gofr.Context) (interface{}, error) {
-        return handleGetUser(ctx, services.UserStore)
-    })
-
-    // Product routes
-    app.GET("/products/{id}", func(ctx *gofr.Context) (interface{}, error) {
-        return handleGetProduct(ctx, services.ProductStore)
-    })
-}
-
-func handleGetUser(ctx *gofr.Context, store interface{}) (interface{}, error) {
-    userStore := store.(user.UserStore) // Type assertion
-    id := ctx.PathParam("id")
-    userID, _ := strconv.ParseInt(id, 10, 64)
-    
-    return userStore.GetUserByID(ctx, userID)
-}
-```
-
 ### Environment-Specific Store Configuration
 
 You can also set up different store configurations for different environments:
@@ -344,7 +152,7 @@ func main() {
     app := gofr.New()
 
     // Environment-based store initialization
-    env := os.Getenv("APP_ENV")
+    env := app.Config.Get("APP_ENV")
     if env == "" {
         env = "development"
     }
