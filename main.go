@@ -12,6 +12,10 @@ import (
 func main() {
 	cli := gofr.NewCMD()
 
+	cli.SubCommand("store init", store.InitStore)
+
+	cli.SubCommand("store generate", store.GenerateStore)
+
 	cli.SubCommand("init", bootstrap.Create)
 
 	cli.SubCommand("version",
@@ -25,10 +29,6 @@ func main() {
 	cli.SubCommand("wrap grpc server", wrap.BuildGRPCGoFrServer)
 
 	cli.SubCommand("wrap grpc client", wrap.BuildGRPCGoFrClient)
-
-	cli.SubCommand("store init", store.InitStore)
-
-	cli.SubCommand("store generate", store.GenerateStore)
 
 	cli.Run()
 }

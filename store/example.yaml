@@ -5,9 +5,9 @@ version: "1.0"
 models:
   # External model (referenced from existing file)
   - name: "User"
-    path: "models/user.go"
-    package: "your-project/models"
-  
+    path: "../structs/user.go"
+    package: "test-store-project/structs"
+
   # Generated model (will be created)
   - name: "Product"
     fields:
@@ -27,8 +27,36 @@ models:
         type: "time.Time"
         tag: "db:\"created_at\" json:\"created_at\""
 
+  # Another generated model
+  - name: "Order"
+    fields:
+      - name: "ID"
+        type: "int64"
+        tag: "db:\"id\" json:\"id\""
+      - name: "UserID"
+        type: "int64"
+        tag: "db:\"user_id\" json:\"user_id\""
+      - name: "TotalAmount"
+        type: "float64"
+        tag: "db:\"total_amount\" json:\"total_amount\""
+      - name: "Status"
+        type: "string"
+        tag: "db:\"status\" json:\"status\""
+      - name: "CreatedAt"
+        type: "time.Time"
+        tag: "db:\"created_at\" json:\"created_at\""
+      - name: "UpdatedAt"
+        type: "time.Time"
+        tag: "db:\"updated_at\" json:\"updated_at\""
+
+  # External model from different package
+  - name: "Category"
+    path: "../models/category.go"
+    package: "test-store-project/models"
+
 # Multiple stores configuration
 stores:
+  # User store using external model
   - name: "user"
     package: "user"
     output_dir: "stores/user"
@@ -44,7 +72,6 @@ stores:
           - name: "id"
             type: "int64"
         description: "Retrieves a user by their ID"
-        use_select: true
 
       - name: "GetAllUsers"
         sql: "SELECT id, name, email, created_at, updated_at FROM users ORDER BY created_at DESC"
@@ -52,7 +79,16 @@ stores:
         model: "User"
         returns: "multiple"
         description: "Retrieves all users ordered by creation date"
-        use_select: true
+
+      - name: "GetUsersByEmail"
+        sql: "SELECT id, name, email, created_at, updated_at FROM users WHERE email LIKE ?"
+        type: "select"
+        model: "User"
+        returns: "multiple"
+        params:
+          - name: "email"
+            type: "string"
+        description: "Searches users by email pattern"
 
       - name: "CreateUser"
         sql: "INSERT INTO users (name, email, created_at, updated_at) VALUES (?, ?, NOW(), NOW())"
@@ -92,6 +128,14 @@ stores:
         returns: "count"
         description: "Returns the total number of users"
 
+      - name: "GetActiveUsers"
+        sql: "SELECT id, name, email, created_at, updated_at FROM users WHERE status = 'active'"
+        type: "select"
+        model: "User"
+        returns: "multiple"
+        description: "Retrieves all active users"
+
+  # Product store using generated model
   - name: "product"
     package: "product"
     output_dir: "stores/product"
@@ -107,7 +151,6 @@ stores:
           - name: "id"
             type: "int64"
         description: "Retrieves a product by its ID"
-        use_select: true
 
       - name: "GetAllProducts"
         sql: "SELECT id, name, price, description, created_at FROM products ORDER BY created_at DESC"
@@ -115,7 +158,6 @@ stores:
         model: "Product"
         returns: "multiple"
         description: "Retrieves all products ordered by creation date"
-        use_select: true
 
       - name: "GetProductsByPriceRange"
         sql: "SELECT id, name, price, description, created_at FROM products WHERE price BETWEEN ? AND ? ORDER BY price ASC"
@@ -128,7 +170,16 @@ stores:
           - name: "maxPrice"
             type: "float64"
         description: "Retrieves products within a price range"
-        use_select: true
+
+      - name: "GetProductsByName"
+        sql: "SELECT id, name, price, description, created_at FROM products WHERE name LIKE ?"
+        type: "select"
+        model: "Product"
+        returns: "multiple"
+        params:
+          - name: "namePattern"
+            type: "string"
+        description: "Searches products by name pattern"
 
       - name: "CreateProduct"
         sql: "INSERT INTO products (name, price, description, created_at) VALUES (?, ?, ?, NOW())"
@@ -172,20 +223,189 @@ stores:
         returns: "count"
         description: "Returns the total number of products"
 
-# Legacy single store format (still supported)
-# Uncomment to use single store instead of multi-store
-# store:
-#   package: "store"
-#   output_dir: "stores"
-#   interface: "Store"
-#   implementation: "store"
-# queries:
-#   - name: "GetUserByID"
-#     sql: "SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?"
-#     type: "select"
-#     model: "User"
-#     returns: "single"
-#     params:
-#       - name: "id"
-#         type: "int64"
-#     description: "Retrieves a user by their ID"
+      - name: "GetExpensiveProducts"
+        sql: "SELECT id, name, price, description, created_at FROM products WHERE price > ?"
+        type: "select"
+        model: "Product"
+        returns: "multiple"
+        params:
+          - name: "minPrice"
+            type: "float64"
+        description: "Retrieves products above a certain price"
+
+  # Order store using generated model
+  - name: "order"
+    package: "order"
+    output_dir: "stores/order"
+    interface: "OrderStore"
+    implementation: "orderStore"
+    queries:
+      - name: "GetOrderByID"
+        sql: "SELECT id, user_id, total_amount, status, created_at, updated_at FROM orders WHERE id = ?"
+        type: "select"
+        model: "Order"
+        returns: "single"
+        params:
+          - name: "id"
+            type: "int64"
+        description: "Retrieves an order by its ID"
+
+      - name: "GetOrdersByUserID"
+        sql: "SELECT id, user_id, total_amount, status, created_at, updated_at FROM orders WHERE user_id = ? ORDER BY created_at DESC"
+        type: "select"
+        model: "Order"
+        returns: "multiple"
+        params:
+          - name: "userID"
+            type: "int64"
+        description: "Retrieves all orders for a specific user"
+
+      - name: "GetOrdersByStatus"
+        sql: "SELECT id, user_id, total_amount, status, created_at, updated_at FROM orders WHERE status = ? ORDER BY created_at DESC"
+        type: "select"
+        model: "Order"
+        returns: "multiple"
+        params:
+          - name: "status"
+            type: "string"
+        description: "Retrieves orders by status"
+
+      - name: "CreateOrder"
+        sql: "INSERT INTO orders (user_id, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())"
+        type: "insert"
+        params:
+          - name: "userID"
+            type: "int64"
+          - name: "totalAmount"
+            type: "float64"
+          - name: "status"
+            type: "string"
+        description: "Creates a new order"
+
+      - name: "UpdateOrderStatus"
+        sql: "UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?"
+        type: "update"
+        returns: "count"
+        params:
+          - name: "status"
+            type: "string"
+          - name: "id"
+            type: "int64"
+        description: "Updates an order's status"
+
+      - name: "UpdateOrderAmount"
+        sql: "UPDATE orders SET total_amount = ?, updated_at = NOW() WHERE id = ?"
+        type: "update"
+        returns: "count"
+        params:
+          - name: "totalAmount"
+            type: "float64"
+          - name: "id"
+            type: "int64"
+        description: "Updates an order's total amount"
+
+      - name: "DeleteOrder"
+        sql: "DELETE FROM orders WHERE id = ?"
+        type: "delete"
+        returns: "count"
+        params:
+          - name: "id"
+            type: "int64"
+        description: "Deletes an order by ID"
+
+      - name: "GetOrderCount"
+        sql: "SELECT COUNT(*) FROM orders"
+        type: "select"
+        returns: "count"
+        description: "Returns the total number of orders"
+
+      - name: "GetRecentOrders"
+        sql: "SELECT id, user_id, total_amount, status, created_at, updated_at FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) ORDER BY created_at DESC"
+        type: "select"
+        model: "Order"
+        returns: "multiple"
+        params:
+          - name: "days"
+            type: "int"
+        description: "Retrieves orders from the last N days"
+
+  # Category store using external model (different package)
+  - name: "category"
+    package: "category"
+    output_dir: "stores/category"
+    interface: "CategoryStore"
+    implementation: "categoryStore"
+    queries:
+      - name: "GetCategoryByID"
+        sql: "SELECT id, name, description, parent_id, created_at FROM categories WHERE id = ?"
+        type: "select"
+        model: "Category"
+        returns: "single"
+        params:
+          - name: "id"
+            type: "int64"
+        description: "Retrieves a category by its ID"
+
+      - name: "GetAllCategories"
+        sql: "SELECT id, name, description, parent_id, created_at FROM categories ORDER BY name ASC"
+        type: "select"
+        model: "Category"
+        returns: "multiple"
+        description: "Retrieves all categories ordered by name"
+
+      - name: "GetRootCategories"
+        sql: "SELECT id, name, description, parent_id, created_at FROM categories WHERE parent_id IS NULL ORDER BY name ASC"
+        type: "select"
+        model: "Category"
+        returns: "multiple"
+        description: "Retrieves top-level categories"
+
+      - name: "GetSubCategories"
+        sql: "SELECT id, name, description, parent_id, created_at FROM categories WHERE parent_id = ? ORDER BY name ASC"
+        type: "select"
+        model: "Category"
+        returns: "multiple"
+        params:
+          - name: "parentID"
+            type: "int64"
+        description: "Retrieves subcategories for a parent category"
+
+      - name: "CreateCategory"
+        sql: "INSERT INTO categories (name, description, parent_id, created_at) VALUES (?, ?, ?, NOW())"
+        type: "insert"
+        params:
+          - name: "name"
+            type: "string"
+          - name: "description"
+            type: "string"
+          - name: "parentID"
+            type: "*int64"
+        description: "Creates a new category"
+
+      - name: "UpdateCategory"
+        sql: "UPDATE categories SET name = ?, description = ? WHERE id = ?"
+        type: "update"
+        returns: "count"
+        params:
+          - name: "name"
+            type: "string"
+          - name: "description"
+            type: "string"
+          - name: "id"
+            type: "int64"
+        description: "Updates an existing category"
+
+      - name: "DeleteCategory"
+        sql: "DELETE FROM categories WHERE id = ?"
+        type: "delete"
+        returns: "count"
+        params:
+          - name: "id"
+            type: "int64"
+        description: "Deletes a category by ID"
+
+      - name: "GetCategoryCount"
+        sql: "SELECT COUNT(*) FROM categories"
+        type: "select"
+        returns: "count"
+        description: "Returns the total number of categories"
