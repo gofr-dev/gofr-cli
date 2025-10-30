@@ -68,7 +68,9 @@ func Migrate(ctx *gofr.Context) (any, error) {
 		return nil, errNameEmpty
 	}
 
-	if err := createMigrationFile(ctx, migName); err != nil {
+	camelCasedMigName := toCamelCase(migName)
+
+	if err := createMigrationFile(ctx, camelCasedMigName); err != nil {
 		return nil, fmt.Errorf("error while creating migration file, err: %w", err)
 	}
 
@@ -76,7 +78,7 @@ func Migrate(ctx *gofr.Context) (any, error) {
 		return nil, fmt.Errorf("error while creating all.go file, err: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created migration %v", migName), nil
+	return fmt.Sprintf("Successfully created migration %v", camelCasedMigName), nil
 }
 
 func createMigrationFile(ctx *gofr.Context, migrationName string) error {
@@ -182,9 +184,38 @@ func findMigrations(files []os.DirEntry) map[string]string {
 		if len(fileParts) < 2 || file.Name() == allFile || fileParts[len(fileParts)-1] == "test.go" {
 			continue
 		}
-
-		existingMig[fileParts[0]] = strings.TrimSuffix(strings.Join(fileParts[1:], "_"), ".go")
+		// convert second part (function) to camelCase, since migration files are now generated using camelCase
+		existingMig[fileParts[0]] = toCamelCase(strings.TrimSuffix(strings.Join(fileParts[1:], "_"), ".go"))
 	}
 
 	return existingMig
+}
+
+// toCamelCase converts snake_case or kebab-case to camelCase. If input has no delimiters,
+// it preserves existing casing except lowercasing the first letter.
+func toCamelCase(migrationName string) string {
+	if migrationName == "" {
+		return migrationName
+	}
+	// If no delimiters, assume it's already camel/Pascal case or a single word; just lowercase first rune
+	if !strings.Contains(migrationName, "_") && !strings.Contains(migrationName, "-") {
+		return strings.ToLower(migrationName[:1]) + migrationName[1:]
+	}
+
+	migrationName = strings.ReplaceAll(migrationName, "-", "_")
+	parts := strings.FieldsFunc(migrationName, func(r rune) bool { return r == '_' || r == '-' })
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	result := strings.ToLower(parts[0])
+
+	for _, part := range parts[1:] {
+		if part != "" {
+			result += strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
+		}
+	}
+
+	return result
 }
