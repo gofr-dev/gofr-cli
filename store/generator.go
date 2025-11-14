@@ -4,26 +4,34 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"text/template"
+	"unicode"
 
 	"gofr.dev/pkg/gofr"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"golang.org/x/tools/go/ast/astutil"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	defaultFilePerm    = 0644
+	defaultFilePerm    = 0600
 	defaultDirPerm     = 0755
 	defaultPackage     = "store"
 	allStoresFile      = "stores/all.go"
-	minMatchLength     = 2 // Minimum regex match length
-	minPartsLength     = 2 // Minimum parts length for module detection
-	linesPerStoreEntry = 3 // Number of lines per store entry in all.go
+	minMatchLength     = 2
+	minPartsLength     = 2
+	linesPerStoreEntry = 3
+	allFunctionName    = "All"
+	stringType         = "string"
 )
 
 var (
@@ -31,10 +39,18 @@ var (
 	errNoStoresDefined     = errors.New("no stores defined in configuration")
 	errOpeningConfigFile   = errors.New("error opening the config file")
 	errFailedToParseConfig = errors.New("failed to parse config file")
+	errInvalidStoreName    = errors.New("store name must be a valid Go identifier")
+	errGoKeyword           = errors.New("cannot use Go keyword as name")
+	errEmptyStoreName      = errors.New("store name cannot be empty")
+	errEmptyPackageName    = errors.New("package name cannot be empty")
+	errInvalidIdentifier   = errors.New("identifier must start with letter or underscore")
+	errAllFunctionNotFound = errors.New("All() function not found")
+	errMapLiteralNotFound  = errors.New("map literal not found in All() function")
+	errMapClosingBrace     = errors.New("could not find map closing brace")
+	errMapLiteralInFile    = errors.New("map literal not found")
 )
 
-// storeRegex matches store entries in all.go file.
-var storeRegex = regexp.MustCompile(`^\s*"([^"]+)"\s*:\s*func\(\)\s*any\s*\{`)
+var storeRegex = regexp.MustCompile(`(?m)\s*"([^"]+)"\s*:\s*func\s*\(\s*\)\s*any\s*\{`)
 
 // Config represents the YAML configuration for store generation.
 type Config struct {
@@ -57,8 +73,8 @@ type Info struct {
 type Model struct {
 	Name    string  `yaml:"name"`
 	Fields  []Field `yaml:"fields,omitempty"`
-	Path    string  `yaml:"path,omitempty"`    // Path to existing model file
-	Package string  `yaml:"package,omitempty"` // Package name for imported model
+	Path    string  `yaml:"path,omitempty"`
+	Package string  `yaml:"package,omitempty"`
 }
 
 // Field represents a model field.
@@ -73,10 +89,10 @@ type Field struct {
 type Query struct {
 	Name        string            `yaml:"name"`
 	SQL         string            `yaml:"sql"`
-	Type        string            `yaml:"type"` // select, insert, update, delete, transaction, health
+	Type        string            `yaml:"type"`
 	Model       string            `yaml:"model,omitempty"`
 	Params      []QueryParam      `yaml:"params,omitempty"`
-	Returns     string            `yaml:"returns,omitempty"` // single, multiple, count, health
+	Returns     string            `yaml:"returns,omitempty"`
 	Description string            `yaml:"description,omitempty"`
 	Tags        map[string]string `yaml:"tags,omitempty"`
 	UseSelect   bool              `yaml:"use_select,omitempty"`
@@ -96,6 +112,15 @@ type Entry struct {
 	InterfaceName string
 }
 
+// ImportInfo represents an import with its path and optional alias.
+type ImportInfo struct {
+	Path  string
+	Alias string
+}
+
+// ModelAliasMap maps model names to their import aliases for type resolution.
+type ModelAliasMap map[string]string
+
 // InitStore creates the initial store structure and configuration.
 func InitStore(ctx *gofr.Context) (any, error) {
 	storeName := ctx.Param("name")
@@ -103,33 +128,31 @@ func InitStore(ctx *gofr.Context) (any, error) {
 		return nil, errStoreNameRequired
 	}
 
-	// Create stores directory if it doesn't exist
+	if err := validateGoIdentifier(storeName, "store name"); err != nil {
+		return nil, fmt.Errorf("invalid store name: %w", err)
+	}
+
 	if err := os.MkdirAll("stores", defaultDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create stores directory: %w", err)
 	}
 
-	// Create store-specific directory
 	storeDir := fmt.Sprintf("stores/%s", strings.ToLower(storeName))
 	if err := os.MkdirAll(storeDir, defaultDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create store directory: %w", err)
 	}
 
-	// Generate store.yaml configuration file
 	if err := generateStoreConfig(ctx, storeName, storeDir); err != nil {
 		return nil, fmt.Errorf("failed to generate store config: %w", err)
 	}
 
-	// Generate initial interface.go
 	if err := generateInitialInterface(ctx, storeName, storeDir); err != nil {
 		return nil, fmt.Errorf("failed to generate initial interface: %w", err)
 	}
 
-	// Generate initial store.go
 	if err := generateInitialStore(ctx, storeName, storeDir); err != nil {
 		return nil, fmt.Errorf("failed to generate initial store: %w", err)
 	}
 
-	// Generate/update all.go at stores root level (with proper appending)
 	newStores := []Entry{{
 		Name:          storeName,
 		PackageName:   strings.ToLower(storeName),
@@ -153,36 +176,33 @@ func GenerateStore(ctx *gofr.Context) (any, error) {
 		configPath = "stores/store.yaml"
 	}
 
-	config, err := parseConfigFile(ctx, configPath)
+	cfg, err := parseConfigFile(ctx, configPath)
 	if err != nil {
 		ctx.Logger.Errorf("Failed to parse config file: %v", err)
 		return nil, err
 	}
 
-	ctx.Logger.Infof("Parsed config with %d stores", len(config.Stores))
+	ctx.Logger.Infof("Parsed config with %d stores", len(cfg.Stores))
 
-	if len(config.Stores) == 0 {
+	if len(cfg.Stores) == 0 {
 		return nil, errNoStoresDefined
 	}
 
-	// Generate each store
-	for _, store := range config.Stores {
-		if err := generateSingleStore(ctx, config, &store); err != nil {
-			return nil, fmt.Errorf("failed to generate store %s: %w", store.Name, err)
+	for i := range cfg.Stores {
+		if err := generateSingleStore(ctx, cfg, &cfg.Stores[i]); err != nil {
+			return nil, fmt.Errorf("failed to generate store %s: %w", cfg.Stores[i].Name, err)
 		}
 	}
 
-	// Convert stores to Entry format
-	newStores := make([]Entry, 0, len(config.Stores))
-	for _, store := range config.Stores {
+	newStores := make([]Entry, 0, len(cfg.Stores))
+	for i := range cfg.Stores {
 		newStores = append(newStores, Entry{
-			Name:          store.Name,
-			PackageName:   strings.ToLower(store.Name),
-			InterfaceName: cases.Title(language.English).String(store.Name) + "Store",
+			Name:          cfg.Stores[i].Name,
+			PackageName:   strings.ToLower(cfg.Stores[i].Name),
+			InterfaceName: cases.Title(language.English).String(cfg.Stores[i].Name) + "Store",
 		})
 	}
 
-	// Update all.go at the stores root level (append mode)
 	ctx.Logger.Infof("About to update all.go with %d stores", len(newStores))
 
 	if err := appendStoreEntries(ctx, newStores); err != nil {
@@ -194,36 +214,108 @@ func GenerateStore(ctx *gofr.Context) (any, error) {
 	return "Successfully generated store layer files", nil
 }
 
+// validateGoIdentifier validates that a string is a valid Go identifier.
+func validateGoIdentifier(name, fieldName string) error {
+	if name == "" {
+		return fmt.Errorf("%w: %s", errEmptyStoreName, fieldName)
+	}
+
+	keywords := getGoKeywords()
+	if keywords[name] {
+		return fmt.Errorf("%w: %s", errGoKeyword, name)
+	}
+
+	first := rune(name[0])
+	if !unicode.IsLetter(first) && first != '_' {
+		return fmt.Errorf("%w: %s", errInvalidIdentifier, name)
+	}
+
+	for _, r := range name[1:] {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			return fmt.Errorf("%w: invalid character %q in %s", errInvalidStoreName, r, name)
+		}
+	}
+
+	return nil
+}
+
+// getGoKeywords returns a map of Go keywords.
+func getGoKeywords() map[string]bool {
+	return map[string]bool{
+		"break":       true,
+		"case":        true,
+		"chan":        true,
+		"const":       true,
+		"continue":    true,
+		"default":     true,
+		"defer":       true,
+		"else":        true,
+		"fallthrough": true,
+		"for":         true,
+		"func":        true,
+		"go":          true,
+		"goto":        true,
+		"if":          true,
+		"import":      true,
+		"interface":   true,
+		"map":         true,
+		"package":     true,
+		"range":       true,
+		"return":      true,
+		"select":      true,
+		"struct":      true,
+		"switch":      true,
+		"type":        true,
+		"var":         true,
+	}
+}
+
+// validateStoreName validates store name before directory creation.
+func validateStoreName(store *Info) error {
+	if err := validateGoIdentifier(store.Name, "store name"); err != nil {
+		return err
+	}
+
+	if store.Package == "" {
+		return fmt.Errorf("%w", errEmptyPackageName)
+	}
+
+	if err := validateGoIdentifier(store.Package, "package name"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // generateSingleStore generates a single store.
-func generateSingleStore(ctx *gofr.Context, config *Config, store *Info) error {
+func generateSingleStore(ctx *gofr.Context, cfg *Config, store *Info) error {
+	if err := validateStoreName(store); err != nil {
+		return fmt.Errorf("validation failed for store %q: %w", store.Name, err)
+	}
+
 	outputDir := store.OutputDir
 	if outputDir == "" {
 		outputDir = fmt.Sprintf("stores/%s", store.Name)
 	}
 
-	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(outputDir, defaultDirPerm); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Create a store-specific config for this store
 	storeConfig := &Config{
-		Version: config.Version,
-		Models:  config.Models,
+		Version: cfg.Version,
+		Models:  cfg.Models,
 		Stores:  []Info{*store},
 	}
 
-	// Generate interface file
 	if err := generateInterface(ctx, storeConfig, outputDir); err != nil {
 		return fmt.Errorf("failed to generate interface: %w", err)
 	}
 
-	// Generate implementation file
 	if err := generateImplementation(ctx, storeConfig, outputDir); err != nil {
 		return fmt.Errorf("failed to generate implementation: %w", err)
 	}
 
-	// Generate model files
 	if err := generateModels(ctx, storeConfig, outputDir); err != nil {
 		return fmt.Errorf("failed to generate models: %w", err)
 	}
@@ -242,74 +334,214 @@ func parseConfigFile(ctx *gofr.Context, configPath string) (*Config, error) {
 	}
 	defer file.Close()
 
-	var config Config
+	var cfg Config
 
 	decoder := yaml.NewDecoder(file)
-
-	if err := decoder.Decode(&config); err != nil {
+	if err := decoder.Decode(&cfg); err != nil {
 		ctx.Logger.Errorf("Failed to parse config file: %v", err)
 		return nil, errFailedToParseConfig
 	}
 
-	return &config, nil
+	return &cfg, nil
 }
 
-// collectImports collects all required imports for the generated code.
-func collectImports(config *Config) []string {
-	imports := []string{"gofr.dev/pkg/gofr"}
+// canonicalizeImport normalizes an import path for comparison.
+func canonicalizeImport(imp string) string {
+	imp = strings.TrimSpace(imp)
+	parts := strings.Fields(imp)
+
+	if len(parts) > 1 {
+		imp = parts[len(parts)-1]
+	}
+
+	imp = strings.Trim(imp, `"`)
+	imp = strings.TrimSpace(imp)
+
+	return imp
+}
+
+// extractPackageName extracts the last component of an import path.
+func extractPackageName(importPath string) string {
+	canonical := canonicalizeImport(importPath)
+	parts := strings.Split(canonical, "/")
+
+	return parts[len(parts)-1]
+}
+
+// collectImports collects all required imports with canonicalization.
+func collectImports(cfg *Config) ([]ImportInfo, ModelAliasMap) {
+	imports := []ImportInfo{
+		{Path: "gofr.dev/pkg/gofr", Alias: ""},
+	}
+
 	importMap := make(map[string]bool)
+	pkgNameCount := make(map[string]int)
+	modelAliasMap := make(ModelAliasMap)
+	usedModels := getModelsUsedByStore(cfg)
+	packageModels := make(map[string][]string)
+	packageInfo := make(map[string]string)
+	needsTime := checkNeedsTimeImport(cfg, usedModels)
 
-	// Get models used by this specific store
-	usedModels := getModelsUsedByStore(config)
+	collectExternalModelImports(cfg, usedModels, importMap, packageInfo,
+		packageModels, pkgNameCount)
 
-	// Add imports for models that have external paths and are used by this store
-	for _, model := range config.Models {
-		if model.Path != "" && model.Package != "" && usedModels[model.Name] {
-			if !importMap[model.Package] {
-				imports = append(imports, model.Package)
-				importMap[model.Package] = true
+	if needsTime && !importMap["time"] {
+		imports = append(imports, ImportInfo{Path: "time", Alias: ""})
+		importMap["time"] = true
+	}
+
+	usedAliases := make(map[string]bool)
+	pathToAlias := make(map[string]string)
+
+	for canonicalPath, pkgName := range packageInfo {
+		alias := resolveAlias(pkgName, pkgNameCount, usedAliases, cfg)
+		pathToAlias[canonicalPath] = alias
+		imports = append(imports, ImportInfo{
+			Path:  canonicalPath,
+			Alias: alias,
+		})
+	}
+
+	mapModelAliases(packageModels, pathToAlias, packageInfo, modelAliasMap)
+
+	return imports, modelAliasMap
+}
+
+// checkNeedsTimeImport checks if time import is needed.
+func checkNeedsTimeImport(cfg *Config, usedModels map[string]bool) bool {
+	for i := range cfg.Models {
+		model := &cfg.Models[i]
+		if !usedModels[model.Name] {
+			continue
+		}
+
+		for j := range model.Fields {
+			if strings.Contains(model.Fields[j].Type, "time.Time") {
+				return true
 			}
 		}
 	}
 
-	return imports
+	return false
 }
 
-// getModelsUsedByStore returns a map of model names that are used by the current store.
-func getModelsUsedByStore(config *Config) map[string]bool {
+// collectExternalModelImports collects external model imports.
+func collectExternalModelImports(cfg *Config, usedModels map[string]bool,
+	importMap map[string]bool, packageInfo map[string]string,
+	packageModels map[string][]string, pkgNameCount map[string]int) {
+	for i := range cfg.Models {
+		model := &cfg.Models[i]
+		if !usedModels[model.Name] {
+			continue
+		}
+
+		if model.Path == "" || model.Package == "" {
+			continue
+		}
+
+		canonicalPath := canonicalizeImport(model.Package)
+		if !importMap[canonicalPath] {
+			pkgName := extractPackageName(canonicalPath)
+			packageInfo[canonicalPath] = pkgName
+			importMap[canonicalPath] = true
+			pkgNameCount[pkgName]++
+		}
+
+		packageModels[canonicalPath] = append(packageModels[canonicalPath], model.Name)
+	}
+}
+
+// resolveAlias resolves the import alias.
+func resolveAlias(pkgName string, pkgNameCount map[string]int,
+	usedAliases map[string]bool, cfg *Config) string {
+	if pkgNameCount[pkgName] <= 1 && pkgName != cfg.Stores[0].Package {
+		return ""
+	}
+
+	alias := pkgName
+	counter := 1
+
+	for usedAliases[alias] {
+		alias = fmt.Sprintf("%s%d", pkgName, counter)
+		counter++
+	}
+
+	usedAliases[alias] = true
+
+	return alias
+}
+
+// mapModelAliases maps model names to their aliases.
+func mapModelAliases(packageModels map[string][]string, pathToAlias map[string]string,
+	packageInfo map[string]string, modelAliasMap ModelAliasMap) {
+	for canonicalPath, modelNames := range packageModels {
+		aliasOrPkgName := pathToAlias[canonicalPath]
+		if aliasOrPkgName == "" {
+			aliasOrPkgName = packageInfo[canonicalPath]
+		}
+
+		for _, modelName := range modelNames {
+			modelAliasMap[modelName] = aliasOrPkgName
+		}
+	}
+}
+
+// getModelsUsedByStore returns a map of model names used by the store.
+func getModelsUsedByStore(cfg *Config) map[string]bool {
 	usedModels := make(map[string]bool)
 
-	// Check all queries in the current store (first store in the array)
-	if len(config.Stores) > 0 {
-		for i := range config.Stores[0].Queries {
-			query := &config.Stores[0].Queries[i]
-			if query.Model != "" {
-				usedModels[query.Model] = true
-			}
+	if len(cfg.Stores) == 0 {
+		return usedModels
+	}
+
+	for i := range cfg.Stores[0].Queries {
+		query := &cfg.Stores[0].Queries[i]
+		if query.Model != "" {
+			usedModels[query.Model] = true
 		}
 	}
 
 	return usedModels
 }
 
-// generateInterface generates the store interface file.
-func generateInterface(ctx *gofr.Context, config *Config, outputDir string) error {
-	interfaceFile := filepath.Join(outputDir, "interface.go")
-	imports := collectImports(config)
+// getModelTypeFn creates a function to get model types with proper package qualification.
+func getModelTypeFn(cfg *Config, imports []ImportInfo, modelAliasMap ModelAliasMap) func(string) string {
+	return func(modelName string) string {
+		if alias, exists := modelAliasMap[modelName]; exists {
+			return alias + "." + modelName
+		}
 
-	t, err := template.New("interface").Funcs(template.FuncMap{
-		"getModelType": func(modelName string) string {
-			// Check if this model is from an external package
-			for _, model := range config.Models {
-				if model.Name == modelName && model.Path != "" && model.Package != "" {
-					// Extract package name from the full package path
-					parts := strings.Split(model.Package, "/")
-					pkgName := parts[len(parts)-1]
+		for i := range cfg.Models {
+			model := &cfg.Models[i]
+			if model.Name != modelName || model.Path == "" || model.Package == "" {
+				continue
+			}
+
+			for j := range imports {
+				imp := &imports[j]
+				if canonicalizeImport(imp.Path) == canonicalizeImport(model.Package) {
+					if imp.Alias != "" {
+						return imp.Alias + "." + modelName
+					}
+
+					pkgName := extractPackageName(imp.Path)
+
 					return pkgName + "." + modelName
 				}
 			}
-			return modelName
-		},
+		}
+
+		return modelName
+	}
+}
+
+// generateInterface generates the store interface file.
+func generateInterface(ctx *gofr.Context, cfg *Config, outputDir string) error {
+	interfaceFile := filepath.Join(outputDir, "interface.go")
+	imports, modelAliasMap := collectImports(cfg)
+
+	t, err := template.New("interface").Funcs(template.FuncMap{
+		"getModelType": getModelTypeFn(cfg, imports, modelAliasMap),
 	}).Parse(InterfaceTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to parse interface template: %w", err)
@@ -323,8 +555,8 @@ func generateInterface(ctx *gofr.Context, config *Config, outputDir string) erro
 
 	data := struct {
 		Store   Info
-		Imports []string
-	}{config.Stores[0], imports}
+		Imports []ImportInfo
+	}{cfg.Stores[0], imports}
 
 	if err := t.Execute(file, data); err != nil {
 		return fmt.Errorf("failed to execute interface template: %w", err)
@@ -336,23 +568,12 @@ func generateInterface(ctx *gofr.Context, config *Config, outputDir string) erro
 }
 
 // generateImplementation generates the store implementation file.
-func generateImplementation(ctx *gofr.Context, config *Config, outputDir string) error {
-	implFile := filepath.Join(outputDir, fmt.Sprintf("%s.go", config.Stores[0].Implementation))
-	imports := collectImports(config)
+func generateImplementation(ctx *gofr.Context, cfg *Config, outputDir string) error {
+	implFile := filepath.Join(outputDir, fmt.Sprintf("%s.go", cfg.Stores[0].Implementation))
+	imports, modelAliasMap := collectImports(cfg)
 
 	t, err := template.New("implementation").Funcs(template.FuncMap{
-		"getModelType": func(modelName string) string {
-			// Check if this model is from an external package
-			for _, model := range config.Models {
-				if model.Name == modelName && model.Path != "" && model.Package != "" {
-					// Extract package name from the full package path
-					parts := strings.Split(model.Package, "/")
-					pkgName := parts[len(parts)-1]
-					return pkgName + "." + modelName
-				}
-			}
-			return modelName
-		},
+		"getModelType": getModelTypeFn(cfg, imports, modelAliasMap),
 	}).Parse(ImplementationTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to parse implementation template: %w", err)
@@ -366,8 +587,8 @@ func generateImplementation(ctx *gofr.Context, config *Config, outputDir string)
 
 	data := struct {
 		Store   Info
-		Imports []string
-	}{config.Stores[0], imports}
+		Imports []ImportInfo
+	}{cfg.Stores[0], imports}
 
 	if err := t.Execute(file, data); err != nil {
 		return fmt.Errorf("failed to execute implementation template: %w", err)
@@ -379,50 +600,54 @@ func generateImplementation(ctx *gofr.Context, config *Config, outputDir string)
 }
 
 // generateModels generates model files or references existing ones.
-func generateModels(ctx *gofr.Context, config *Config, outputDir string) error {
-	// Get models used by this specific store
-	usedModels := getModelsUsedByStore(config)
+func generateModels(ctx *gofr.Context, cfg *Config, outputDir string) error {
+	usedModels := getModelsUsedByStore(cfg)
 
-	for _, model := range config.Models {
-		// Only generate models that are actually used by this store
+	for i := range cfg.Models {
+		model := &cfg.Models[i]
 		if !usedModels[model.Name] {
 			continue
 		}
 
-		// If model has a path, it's referencing an existing model file
 		if model.Path != "" {
 			ctx.Logger.Infof("Referencing existing model: %s from %s", model.Name, model.Path)
 			continue
 		}
 
-		// Generate new model file only if no path is specified
 		modelFile := filepath.Join(outputDir, fmt.Sprintf("%s.go", strings.ToLower(model.Name)))
+		store := cfg.Stores[0]
 
-		t, err := template.New("model").Funcs(template.FuncMap{
-			"lower": strings.ToLower,
-		}).Parse(ModelTemplate)
-		if err != nil {
-			return fmt.Errorf("failed to parse model template: %w", err)
+		if err := generateModelFile(ctx, modelFile, &store, model); err != nil {
+			return err
 		}
-
-		file, err := os.Create(modelFile)
-		if err != nil {
-			return fmt.Errorf("failed to create model file: %w", err)
-		}
-
-		// Pass the store and model context correctly
-		store := config.Stores[0]
-		if err := t.Execute(file, struct {
-			Store Info
-			Model Model
-		}{store, model}); err != nil {
-			file.Close() // Close file before returning error
-			return fmt.Errorf("failed to execute model template: %w", err)
-		}
-
-		file.Close() // Close file explicitly instead of defer in loop
-		ctx.Logger.Infof("Generated model file: %s", modelFile)
 	}
+
+	return nil
+}
+
+// generateModelFile generates a single model file.
+func generateModelFile(ctx *gofr.Context, modelFile string, store *Info, model *Model) error {
+	t, err := template.New("model").Funcs(template.FuncMap{
+		"lower": strings.ToLower,
+	}).Parse(ModelTemplate)
+	if err != nil {
+		return fmt.Errorf("failed to parse model template: %w", err)
+	}
+
+	file, err := os.Create(modelFile)
+	if err != nil {
+		return fmt.Errorf("failed to create model file: %w", err)
+	}
+	defer file.Close()
+
+	if err := t.Execute(file, struct {
+		Store Info
+		Model Model
+	}{*store, *model}); err != nil {
+		return fmt.Errorf("failed to execute model template: %w", err)
+	}
+
+	ctx.Logger.Infof("Generated model file: %s", modelFile)
 
 	return nil
 }
@@ -463,7 +688,7 @@ func generateStoreConfig(ctx *gofr.Context, storeName, storeDir string) error {
 	return nil
 }
 
-// generateInitialInterface creates the initial interface.go file with commented GoFr imports.
+// generateInitialInterface creates the initial interface.go file.
 func generateInitialInterface(ctx *gofr.Context, storeName, storeDir string) error {
 	interfaceFile := filepath.Join(storeDir, "interface.go")
 
@@ -497,7 +722,7 @@ func generateInitialInterface(ctx *gofr.Context, storeName, storeDir string) err
 	return nil
 }
 
-// generateInitialStore creates the initial store.go file with commented GoFr imports.
+// generateInitialStore creates the initial store.go file.
 func generateInitialStore(ctx *gofr.Context, storeName, storeDir string) error {
 	storeFile := filepath.Join(storeDir, fmt.Sprintf("%s.go", strings.ToLower(storeName)))
 
@@ -531,102 +756,96 @@ func generateInitialStore(ctx *gofr.Context, storeName, storeDir string) error {
 	return nil
 }
 
-// appendStoreEntries appends new stores to stores/all.go without overwriting existing entries.
+// appendStoreEntries appends new stores to stores/all.go.
 func appendStoreEntries(ctx *gofr.Context, newStores []Entry) error {
 	projectModule := detectProjectModule()
 	if projectModule == "" {
 		projectModule = "your-project"
 	}
 
-	// Read existing file
 	content, err := os.ReadFile(allStoresFile)
 	if err != nil {
-		// If file doesn't exist, generate complete file
 		return generateCompleteAllFile(ctx, newStores, projectModule)
 	}
 
 	return processExistingAllFile(ctx, content, newStores, projectModule)
 }
 
-// processExistingAllFile handles the logic for updating an existing all.go file.
+// processExistingAllFile processes the existing all.go file.
 func processExistingAllFile(ctx *gofr.Context, content []byte,
 	newStores []Entry, projectModule string) error {
 	lines := strings.Split(string(content), "\n")
-
-	// Parse existing stores and imports more carefully
 	existingStores, existingImports := parseExistingAllFile(lines)
-
-	// Filter out stores that already exist and collect imports to add
-	storesToAdd, importsToAdd := filterNewStores(newStores,
-		existingStores, existingImports, projectModule)
+	storesToAdd, importsToAdd := filterNewStores(newStores, existingStores, existingImports, projectModule)
 
 	if len(storesToAdd) == 0 {
 		ctx.Logger.Info("All stores already exist in all.go")
-
 		return nil
 	}
 
-	return updateAllFileWithNewStores(ctx, lines, storesToAdd,
-		importsToAdd, existingStores, projectModule)
+	return updateAllFileWithNewStores(ctx, lines, storesToAdd, importsToAdd, existingStores, projectModule)
 }
 
-// filterNewStores filters out stores that already exist and prepares imports to add.
+// filterNewStores filters out stores that already exist.
 func filterNewStores(newStores []Entry, existingStores, existingImports map[string]bool,
-	projectModule string) (filteredStores []Entry, importsToAdd []string) {
-	filteredStores = make([]Entry, 0, len(newStores))
+	projectModule string) (filtered []Entry, importsToAdd []string) {
+	filtered = make([]Entry, 0, len(newStores))
 	importsToAdd = make([]string, 0, len(newStores))
 
-	for _, store := range newStores {
+	for i := range newStores {
+		store := &newStores[i]
 		if !existingStores[store.Name] {
-			filteredStores = append(filteredStores, store)
-			// Always add import for new stores
+			filtered = append(filtered, *store)
 			importPath := fmt.Sprintf(`    "%s/stores/%s"`, projectModule, store.PackageName)
+
 			if !existingImports[importPath] {
 				importsToAdd = append(importsToAdd, importPath)
 			}
 		}
 	}
 
-	return filteredStores, importsToAdd
+	return filtered, importsToAdd
 }
 
-// updateAllFileWithNewStores updates the all.go file with new stores and imports.
+// updateAllFileWithNewStores updates the all.go file using AST.
 func updateAllFileWithNewStores(ctx *gofr.Context, lines []string,
 	storesToAdd []Entry, importsToAdd []string,
 	existingStores map[string]bool, projectModule string) error {
-	// Handle import section
-	lines = handleImportSection(lines, importsToAdd)
+	content := strings.Join(lines, "\n")
+	fset := token.NewFileSet()
 
-	// Find map insertion point (try multiple strategies)
-	mapInsertIdx := findMapInsertionPoint(lines)
-	if mapInsertIdx == -1 {
-		// Try alternative method
-		mapInsertIdx = findMapInsertionPointAlternative(lines)
+	file, err := parser.ParseFile(fset, allStoresFile, content, parser.ParseComments)
+	if err != nil {
+		ctx.Logger.Warnf("AST parsing failed, falling back to string-based approach: %v", err)
+		return updateAllFileWithNewStoresStringBased(ctx, lines, storesToAdd,
+			importsToAdd, existingStores, projectModule)
 	}
 
-	if mapInsertIdx == -1 {
-		// Last resort: regenerate the entire file
-		ctx.Logger.Warn("Could not find insertion point, regenerating entire all.go file")
+	for _, imp := range importsToAdd {
+		importPath := canonicalizeImport(imp)
+		if importPath != "" {
+			astutil.AddImport(fset, file, importPath)
+		}
+	}
+
+	mapInsertPos, err := findMapInsertionPointAST(fset, file)
+	if err != nil {
+		ctx.Logger.Warnf("Could not find map insertion point using AST: %v", err)
 		return regenerateCompleteAllFile(ctx, existingStores, storesToAdd, projectModule)
 	}
 
-	// Insert store entries
-	storeEntries := make([]string, 0, len(storesToAdd)*linesPerStoreEntry)
-	for _, store := range storesToAdd {
-		storeEntries = append(storeEntries,
-			fmt.Sprintf(`        %q: func() any {`, store.Name),
-			fmt.Sprintf(`            return %s.New%s()`, store.PackageName, store.InterfaceName),
-			`        },`)
+	storeEntries := generateStoreEntriesAST(storesToAdd)
+	if err := insertStoreEntriesAST(fset, file, mapInsertPos, storeEntries); err != nil {
+		ctx.Logger.Warnf("Could not insert store entries using AST: %v", err)
+		return regenerateCompleteAllFile(ctx, existingStores, storesToAdd, projectModule)
 	}
 
-	// Insert store entries before the closing brace of the map
-	lines = insertLines(lines, mapInsertIdx, storeEntries)
+	var buf bytes.Buffer
+	if err := format.Node(&buf, fset, file); err != nil {
+		return fmt.Errorf("failed to format AST: %w", err)
+	}
 
-	// Write updated content
-	updatedContent := strings.Join(lines, "\n")
-
-	err := os.WriteFile(allStoresFile, []byte(updatedContent), defaultFilePerm)
-	if err != nil {
+	if err := os.WriteFile(allStoresFile, buf.Bytes(), defaultFilePerm); err != nil {
 		return fmt.Errorf("failed to write updated all.go: %w", err)
 	}
 
@@ -635,17 +854,59 @@ func updateAllFileWithNewStores(ctx *gofr.Context, lines []string,
 	return nil
 }
 
-// regenerateCompleteAllFile regenerates the complete all.go file when insertion point cannot be found.
+// updateAllFileWithNewStoresStringBased is the fallback implementation.
+func updateAllFileWithNewStoresStringBased(ctx *gofr.Context, lines []string,
+	storesToAdd []Entry, importsToAdd []string,
+	existingStores map[string]bool, projectModule string) error {
+	lines = handleImportSection(lines, importsToAdd)
+	mapInsertIdx := findMapInsertionPoint(lines)
+
+	if mapInsertIdx == -1 {
+		mapInsertIdx = findMapInsertionPointAlternative(lines)
+	}
+
+	if mapInsertIdx == -1 {
+		ctx.Logger.Warn("Could not find insertion point, regenerating entire all.go file")
+		return regenerateCompleteAllFile(ctx, existingStores, storesToAdd, projectModule)
+	}
+
+	storeEntries := buildStoreEntries(storesToAdd)
+	lines = insertLines(lines, mapInsertIdx, storeEntries)
+	updatedContent := strings.Join(lines, "\n")
+
+	if err := os.WriteFile(allStoresFile, []byte(updatedContent), defaultFilePerm); err != nil {
+		return fmt.Errorf("failed to write updated all.go: %w", err)
+	}
+
+	ctx.Logger.Infof("Appended %d new stores to all.go with their imports", len(storesToAdd))
+
+	return nil
+}
+
+// buildStoreEntries builds store entry strings.
+func buildStoreEntries(storesToAdd []Entry) []string {
+	entries := make([]string, 0, len(storesToAdd)*linesPerStoreEntry)
+
+	for i := range storesToAdd {
+		store := &storesToAdd[i]
+		entries = append(entries,
+			fmt.Sprintf(`        %q: func() any {`, store.Name),
+			fmt.Sprintf(`            return %s.New%s()`, store.PackageName, store.InterfaceName),
+			`        },`)
+	}
+
+	return entries
+}
+
+// regenerateCompleteAllFile regenerates the complete all.go file.
 func regenerateCompleteAllFile(ctx *gofr.Context, existingStores map[string]bool,
 	storesToAdd []Entry, projectModule string) error {
-	// Combine existing and new stores
 	allStores := make([]Entry, 0, len(existingStores)+len(storesToAdd))
 
 	for storeName := range existingStores {
-		// Reconstruct store entry from name (this is a fallback)
 		allStores = append(allStores, Entry{
 			Name:          storeName,
-			PackageName:   storeName, // Assume package name matches store name
+			PackageName:   storeName,
 			InterfaceName: cases.Title(language.English).String(storeName) + "Store",
 		})
 	}
@@ -655,26 +916,23 @@ func regenerateCompleteAllFile(ctx *gofr.Context, existingStores map[string]bool
 	return generateCompleteAllFile(ctx, allStores, projectModule)
 }
 
-// handleImportSection adds import section if missing or appends to existing one.
+// handleImportSection adds import section if missing.
 func handleImportSection(lines, importsToAdd []string) []string {
 	if len(importsToAdd) == 0 {
 		return lines
 	}
 
 	importInsertIdx := findImportInsertionPoint(lines)
-
 	if importInsertIdx > 0 {
-		// Import section exists, add to it
-		return insertLines(lines, importInsertIdx, importsToAdd)
+		formattedImports := formatImports(importsToAdd)
+		return insertLines(lines, importInsertIdx, formattedImports)
 	}
 
-	// No import section exists, create one
 	return createImportSection(lines, importsToAdd)
 }
 
-// createImportSection creates a new import section in the file.
+// createImportSection creates a new import section.
 func createImportSection(lines, importsToAdd []string) []string {
-	// Find where to insert import section (after package declaration)
 	insertIdx := -1
 
 	for i, line := range lines {
@@ -685,32 +943,45 @@ func createImportSection(lines, importsToAdd []string) []string {
 	}
 
 	if insertIdx == -1 {
-		// Fallback: insert after first line
 		insertIdx = 1
 	}
 
-	// Create import section
 	importSection := []string{""}
 	if len(importsToAdd) > 0 {
 		importSection = append(importSection, "import (")
-		importSection = append(importSection, importsToAdd...)
+		formattedImports := formatImports(importsToAdd)
+		importSection = append(importSection, formattedImports...)
 		importSection = append(importSection, ")")
 	}
 
 	return insertLines(lines, insertIdx, importSection)
 }
 
-// parseExistingAllFile parses the existing all.go file to extract stores and imports.
+// formatImports formats a list of imports.
+func formatImports(importsToAdd []string) []string {
+	formatted := make([]string, len(importsToAdd))
+
+	for i, imp := range importsToAdd {
+		formattedImp := strings.TrimSpace(imp)
+		if !strings.HasPrefix(formattedImp, `"`) {
+			formattedImp = fmt.Sprintf("%q", formattedImp)
+		}
+
+		formatted[i] = fmt.Sprintf(`    %s`, formattedImp)
+	}
+
+	return formatted
+}
+
+// parseExistingAllFile parses the existing all.go file.
 func parseExistingAllFile(lines []string) (existingStores, existingImports map[string]bool) {
 	existingStores = make(map[string]bool)
 	existingImports = make(map[string]bool)
-
 	inImportSection := false
 
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
-		// Check for import section
 		if strings.Contains(trimmedLine, "import (") {
 			inImportSection = true
 			continue
@@ -719,10 +990,9 @@ func parseExistingAllFile(lines []string) (existingStores, existingImports map[s
 		if inImportSection {
 			if trimmedLine == ")" {
 				inImportSection = false
-
 				continue
 			}
-			// Extract import path
+
 			if strings.Contains(trimmedLine, `"`) {
 				existingImports[strings.TrimSpace(trimmedLine)] = true
 			}
@@ -730,7 +1000,6 @@ func parseExistingAllFile(lines []string) (existingStores, existingImports map[s
 			continue
 		}
 
-		// Extract store names using regex
 		matches := storeRegex.FindStringSubmatch(line)
 		if len(matches) >= minMatchLength {
 			existingStores[matches[1]] = true
@@ -744,9 +1013,8 @@ func parseExistingAllFile(lines []string) (existingStores, existingImports map[s
 func findImportInsertionPoint(lines []string) int {
 	for i, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
-		// Find the closing parenthesis of import section
+
 		if trimmedLine == ")" {
-			// Check if this is actually the import section closing
 			for j := i - 1; j >= 0; j-- {
 				if strings.Contains(lines[j], "import (") {
 					return i
@@ -758,7 +1026,194 @@ func findImportInsertionPoint(lines []string) int {
 	return -1
 }
 
-// findMapInsertionPoint finds where to insert new store entries in the map.
+// findMapInsertionPointAST finds the insertion point using AST.
+func findMapInsertionPointAST(_ *token.FileSet, file *ast.File) (token.Pos, error) {
+	allFunc := findAllFunction(file)
+	if allFunc == nil {
+		return token.NoPos, errAllFunctionNotFound
+	}
+
+	mapLit := findMapLiteral(allFunc)
+	if mapLit == nil {
+		return token.NoPos, errMapLiteralNotFound
+	}
+
+	if mapLit.Rbrace.IsValid() {
+		return mapLit.Rbrace, nil
+	}
+
+	return token.NoPos, errMapClosingBrace
+}
+
+// findAllFunction finds the All function in the AST.
+func findAllFunction(file *ast.File) *ast.FuncDecl {
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == allFunctionName {
+			return fn
+		}
+	}
+
+	return nil
+}
+
+// findMapLiteral finds the map literal in the All function.
+func findMapLiteral(allFunc *ast.FuncDecl) *ast.CompositeLit {
+	var mapLit *ast.CompositeLit
+
+	ast.Inspect(allFunc.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) == 0 {
+			return true
+		}
+
+		compLit, ok := ret.Results[0].(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+
+		if !isValidMapLiteral(compLit) {
+			return true
+		}
+
+		mapLit = compLit
+
+		return false
+	})
+
+	return mapLit
+}
+
+// isValidMapLiteral checks if a composite literal is a valid map[string]func() any.
+func isValidMapLiteral(compLit *ast.CompositeLit) bool {
+	mapType, ok := compLit.Type.(*ast.MapType)
+	if !ok {
+		return false
+	}
+
+	keyType, ok := mapType.Key.(*ast.Ident)
+	if !ok || keyType.Name != stringType {
+		return false
+	}
+
+	funcType, ok := mapType.Value.(*ast.FuncType)
+	if !ok || funcType.Results == nil || len(funcType.Results.List) != 1 {
+		return false
+	}
+
+	resultType, ok := funcType.Results.List[0].Type.(*ast.Ident)
+
+	return ok && resultType.Name == "any"
+}
+
+// generateStoreEntriesAST generates AST key-value expressions.
+func generateStoreEntriesAST(storesToAdd []Entry) []ast.KeyValueExpr {
+	entries := make([]ast.KeyValueExpr, 0, len(storesToAdd))
+
+	for i := range storesToAdd {
+		store := &storesToAdd[i]
+		entry := createStoreEntry(store)
+		entries = append(entries, entry)
+	}
+
+	return entries
+}
+
+// createStoreEntry creates a single store AST entry.
+func createStoreEntry(store *Entry) ast.KeyValueExpr {
+	key := &ast.BasicLit{
+		Kind:  token.STRING,
+		Value: fmt.Sprintf(`%q`, store.Name),
+	}
+
+	callExpr := &ast.CallExpr{
+		Fun: &ast.SelectorExpr{
+			X:   &ast.Ident{Name: store.PackageName},
+			Sel: &ast.Ident{Name: fmt.Sprintf("New%s", store.InterfaceName)},
+		},
+	}
+
+	returnStmt := &ast.ReturnStmt{
+		Results: []ast.Expr{callExpr},
+	}
+
+	funcLit := &ast.FuncLit{
+		Type: &ast.FuncType{
+			Results: &ast.FieldList{
+				List: []*ast.Field{
+					{Type: &ast.Ident{Name: "any"}},
+				},
+			},
+		},
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{returnStmt},
+		},
+	}
+
+	return ast.KeyValueExpr{
+		Key:   key,
+		Value: funcLit,
+	}
+}
+
+// insertStoreEntriesAST inserts store entries into the map literal.
+func insertStoreEntriesAST(_ *token.FileSet, file *ast.File,
+	_ token.Pos, entries []ast.KeyValueExpr) error {
+	mapLit := findMapInFile(file)
+	if mapLit == nil {
+		return errMapLiteralInFile
+	}
+
+	exprs := make([]ast.Expr, len(entries))
+	for i := range entries {
+		exprs[i] = &entries[i]
+	}
+
+	if mapLit.Elts == nil {
+		mapLit.Elts = exprs
+	} else {
+		mapLit.Elts = append(mapLit.Elts, exprs...)
+	}
+
+	return nil
+}
+
+// findMapInFile finds the map literal in the file.
+func findMapInFile(file *ast.File) *ast.CompositeLit {
+	var mapLit *ast.CompositeLit
+
+	ast.Inspect(file, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != allFunctionName {
+			return true
+		}
+
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			ret, ok := n.(*ast.ReturnStmt)
+			if !ok || len(ret.Results) == 0 {
+				return true
+			}
+
+			compLit, ok := ret.Results[0].(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+
+			if !isValidMapLiteral(compLit) {
+				return true
+			}
+
+			mapLit = compLit
+
+			return false
+		})
+
+		return false
+	})
+
+	return mapLit
+}
+
+// findMapInsertionPoint finds where to insert new store entries.
 func findMapInsertionPoint(lines []string) int {
 	mapStartFound := false
 	braceDepth := 0
@@ -770,7 +1225,6 @@ func findMapInsertionPoint(lines []string) int {
 
 		if mapStartFound {
 			braceDepth = updateBraceDepth(line, braceDepth)
-
 			if isMapClosingBrace(line, braceDepth) {
 				return i
 			}
@@ -805,7 +1259,7 @@ func isMapClosingBrace(line string, braceDepth int) bool {
 			!strings.Contains(trimmedLine, "func")))
 }
 
-// findMapInsertionPointAlternative is an alternative method for finding the map insertion point.
+// findMapInsertionPointAlternative is an alternative method.
 func findMapInsertionPointAlternative(lines []string) int {
 	inAllFunction := false
 	inMapReturn := false
@@ -813,24 +1267,19 @@ func findMapInsertionPointAlternative(lines []string) int {
 	for i, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
-		// Detect start of All() function
 		if strings.Contains(line, "func All()") {
 			inAllFunction = true
 			continue
 		}
 
-		// Detect map return statement
 		if inAllFunction && (strings.Contains(line, "return map[string]func() any") ||
 			strings.Contains(line, "return map[string]func()any")) {
 			inMapReturn = true
 			continue
 		}
 
-		// If we're in the map return, look for the closing brace
 		if inMapReturn {
-			// Look for standalone closing brace or closing brace with minimal content
-			if trimmedLine == "}" ||
-				(strings.HasPrefix(trimmedLine, "}") && len(trimmedLine) <= 3) {
+			if trimmedLine == "}" || (strings.HasPrefix(trimmedLine, "}") && len(trimmedLine) <= 3) {
 				return i
 			}
 		}
@@ -855,7 +1304,6 @@ func insertLines(lines []string, insertIdx int, newLines []string) []string {
 
 // generateCompleteAllFile generates a complete all.go file from scratch.
 func generateCompleteAllFile(ctx *gofr.Context, stores []Entry, projectModule string) error {
-	// Create stores directory if it doesn't exist
 	if err := os.MkdirAll("stores", defaultDirPerm); err != nil {
 		return fmt.Errorf("failed to create stores directory: %w", err)
 	}
@@ -896,6 +1344,7 @@ func detectProjectModule() string {
 	}
 
 	lines := strings.Split(string(content), "\n")
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "module ") {
