@@ -84,19 +84,19 @@ func Test_validateGoIdentifier_Invalid(t *testing.T) {
 			name:      "starts with number",
 			input:     "123store",
 			fieldName: "store name",
-			errMsg:    "must start with a letter or underscore",
+			errMsg:    "identifier must start with letter or underscore",
 		},
 		{
 			name:      "contains hyphen",
 			input:     "user-profile",
 			fieldName: "store name",
-			errMsg:    "contains invalid character",
+			errMsg:    "invalid character",
 		},
 		{
 			name:      "contains space",
 			input:     "user profile",
 			fieldName: "store name",
-			errMsg:    "contains invalid character",
+			errMsg:    "invalid character",
 		},
 		{
 			name:      "Go keyword - if",
@@ -120,7 +120,7 @@ func Test_validateGoIdentifier_Invalid(t *testing.T) {
 			name:      "contains special character",
 			input:     "user@store",
 			fieldName: "store name",
-			errMsg:    "contains invalid character",
+			errMsg:    "invalid character",
 		},
 	}
 
@@ -158,7 +158,7 @@ func Test_validateStoreName(t *testing.T) {
 				Package: "user",
 			},
 			wantErr: true,
-			errMsg:  "store name",
+			errMsg:  "identifier must start with letter or underscore",
 		},
 		{
 			name: "invalid package name - contains hyphen",
@@ -167,7 +167,7 @@ func Test_validateStoreName(t *testing.T) {
 				Package: "user-profile",
 			},
 			wantErr: true,
-			errMsg:  "package name",
+			errMsg:  "invalid character",
 		},
 		{
 			name: "empty store name",
@@ -470,7 +470,7 @@ func Test_generateSingleStore_InvalidName(t *testing.T) {
 	err := generateSingleStore(ctx, cfg, store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "validation failed")
-	assert.Contains(t, err.Error(), "must start with a letter or underscore")
+	assert.Contains(t, err.Error(), "identifier must start with letter or underscore")
 }
 
 func Test_detectProjectModule(t *testing.T) {
