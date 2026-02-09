@@ -172,4 +172,4 @@ formatters:
         - localmodule
     goimports:
       local-prefixes:
-        - gofr.dev/cli/gofr
+        - gofr.dev
