@@ -817,6 +817,7 @@ func updateAllFileWithNewStores(ctx *gofr.Context, lines []string,
 	file, err := parser.ParseFile(fset, allStoresFile, content, parser.ParseComments)
 	if err != nil {
 		ctx.Logger.Warnf("AST parsing failed, falling back to string-based approach: %v", err)
+
 		return updateAllFileWithNewStoresStringBased(ctx, lines, storesToAdd,
 			importsToAdd, existingStores, projectModule)
 	}

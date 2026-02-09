@@ -475,17 +475,7 @@ func Test_generateSingleStore_InvalidName(t *testing.T) {
 
 func Test_detectProjectModule(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalDir, err := os.Getwd()
-	require.NoError(t, err)
-
-	defer func() {
-		if chdirErr := os.Chdir(originalDir); chdirErr != nil {
-			t.Logf("Failed to restore original directory: %v", chdirErr)
-		}
-	}()
-
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
+	t.Chdir(tmpDir)
 
 	// Test without go.mod
 	module := detectProjectModule()
@@ -496,7 +486,7 @@ func Test_detectProjectModule(t *testing.T) {
 
 go 1.22
 `
-	err = os.WriteFile("go.mod", []byte(goModContent), 0600)
+	err := os.WriteFile("go.mod", []byte(goModContent), 0600)
 	require.NoError(t, err)
 
 	module = detectProjectModule()
@@ -662,20 +652,10 @@ func Test_filterNewStores(t *testing.T) {
 
 func Test_appendStoreEntries_NewFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalDir, err := os.Getwd()
-	require.NoError(t, err)
-
-	defer func() {
-		if chdirErr := os.Chdir(originalDir); chdirErr != nil {
-			t.Logf("Failed to restore original directory: %v", chdirErr)
-		}
-	}()
-
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
+	t.Chdir(tmpDir)
 
 	// Create go.mod
-	err = os.WriteFile("go.mod", []byte("module test-project\n"), 0600)
+	err := os.WriteFile("go.mod", []byte("module test-project\n"), 0600)
 	require.NoError(t, err)
 
 	ctx := createTestContext()
@@ -706,20 +686,10 @@ func Test_appendStoreEntries_NewFile(t *testing.T) {
 
 func Test_appendStoreEntries_ExistingFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalDir, err := os.Getwd()
-	require.NoError(t, err)
-
-	defer func() {
-		if chdirErr := os.Chdir(originalDir); chdirErr != nil {
-			t.Logf("Failed to restore original directory: %v", chdirErr)
-		}
-	}()
-
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
+	t.Chdir(tmpDir)
 
 	// Create go.mod
-	err = os.WriteFile("go.mod", []byte("module test-project\n"), 0600)
+	err := os.WriteFile("go.mod", []byte("module test-project\n"), 0600)
 	require.NoError(t, err)
 
 	// Create stores directory and all.go
@@ -1134,17 +1104,7 @@ func Test_splitContentToLines(t *testing.T) {
 
 func Test_createNewAllFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalDir, err := os.Getwd()
-	require.NoError(t, err)
-
-	defer func() {
-		if chdirErr := os.Chdir(originalDir); chdirErr != nil {
-			t.Logf("Failed to restore original directory: %v", chdirErr)
-		}
-	}()
-
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
+	t.Chdir(tmpDir)
 
 	ctx := createTestContext()
 
@@ -1161,7 +1121,7 @@ func Test_createNewAllFile(t *testing.T) {
 		},
 	}
 
-	err = generateCompleteAllFile(ctx, stores, "test-project")
+	err := generateCompleteAllFile(ctx, stores, "test-project")
 	require.NoError(t, err)
 
 	allFilePath := filepath.Join("stores", "all.go")
