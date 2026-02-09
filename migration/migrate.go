@@ -1,9 +1,11 @@
 package migration
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -12,12 +14,15 @@ import (
 )
 
 const (
-	mig     = "migrations"
-	allFile = "all.go"
+	mig         = "migrations"
+	allFile     = "all.go"
+	matchLength = 3
 )
 
 var (
-	errNameEmpty = errors.New(`please provide the name of the migration using "-name" option`)
+	errNameEmpty    = errors.New(`please provide the name of the migration using "-name" option`)
+	errScanningFile = errors.New("failed to scan existing all.go file")
+	migRegex        = regexp.MustCompile(`^\s*(\d+)\s*:\s*([a-zA-Z_]+)\(\),?\s*$`)
 )
 
 //nolint:gochecknoglobals // keeping them local so that they are computed at the compile time.
@@ -38,9 +43,8 @@ func All() map[int64]migration.Migrate {
 }
 `))
 
-	migrationTemplate = template.Must(template.New("migrationContent").
-				Parse(
-			`package migrations
+	migrationTemplate = template.Must(template.New("migrationContent").Parse(
+		`package migrations
 
 import (
 	"gofr.dev/pkg/gofr/migration"
@@ -58,7 +62,7 @@ func {{ . }}() migration.Migrate {
 `))
 )
 
-func Migrate(ctx *gofr.Context) (interface{}, error) {
+func Migrate(ctx *gofr.Context) (any, error) {
 	migName := ctx.Param("name")
 	if migName == "" {
 		return nil, errNameEmpty
@@ -107,24 +111,73 @@ func createMigrationFile(ctx *gofr.Context, migrationName string) error {
 }
 
 func createAllMigration(ctx *gofr.Context) error {
+	existing := make(map[string]string)
+
+	existing, err := getAllExistingMigrations(ctx, existing)
+	if err != nil {
+		return err
+	}
+
 	f, err := ctx.File.Create(allFile)
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		_ = f.Close()
+	}()
 
 	d, err := os.ReadDir("./")
 	if err != nil {
 		return err
 	}
 
-	migrations := findMigrations(d)
+	currentMigs := findMigrations(d)
 
-	err = allTemplate.Execute(f, migrations)
+	// Merge new migrations into existing map
+	for ts, fn := range currentMigs {
+		if _, ok := existing[ts]; !ok {
+			existing[ts] = fn
+		}
+	}
+
+	err = allTemplate.Execute(f, existing)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func getAllExistingMigrations(ctx *gofr.Context, existing map[string]string) (map[string]string, error) {
+	if _, err := os.Stat(allFile); err == nil {
+		file, err := ctx.File.OpenFile(allFile, os.O_RDONLY, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			_ = file.Close()
+		}()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+
+			matches := migRegex.FindStringSubmatch(line)
+			if len(matches) == matchLength {
+				timestamp := matches[1]
+				funcName := matches[2]
+				existing[timestamp] = funcName
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("%w: %w", errScanningFile, err)
+		}
+	}
+
+	return existing, nil
 }
 
 func findMigrations(files []os.DirEntry) map[string]string {
