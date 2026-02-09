@@ -100,7 +100,9 @@ func createMigrationFile(ctx *gofr.Context, migrationName string) error {
 		return err
 	}
 
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	err = migrationTemplate.Execute(file, migrationName)
 	if err != nil {
@@ -122,6 +124,10 @@ func createAllMigration(ctx *gofr.Context) error {
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		_ = f.Close()
+	}()
 
 	d, err := os.ReadDir("./")
 	if err != nil {
@@ -152,7 +158,9 @@ func getAllExistingMigrations(ctx *gofr.Context, existing map[string]string) (ma
 			return nil, err
 		}
 
-		defer file.Close()
+		defer func() {
+			_ = file.Close()
+		}()
 
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
