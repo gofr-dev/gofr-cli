@@ -126,7 +126,7 @@ func parseProtoFile(ctx *gofr.Context, protoPath string) (*proto.Proto, error) {
 		ctx.Logger.Errorf("Failed to open proto file: %v", err)
 		return nil, ErrOpeningProtoFile
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	parser := proto.NewParser(file)
 

@@ -96,7 +96,7 @@ func createMigrationFile(ctx *gofr.Context, migrationName string) error {
 		return err
 	}
 
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	err = migrationTemplate.Execute(file, migrationName)
 	if err != nil {
