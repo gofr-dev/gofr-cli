@@ -24,7 +24,7 @@ import (
 func main() {
 	app := gofr.New()
 
-	app.GET("/hello", func(ctx *gofr.Context) (interface{}, error) {
+	app.GET("/hello", func(ctx *gofr.Context) (any, error) {
 		return "Hello World!", nil
 	})
 
@@ -39,7 +39,7 @@ type modInfo struct {
 	GofrVersion string
 }
 
-func Create(ctx *gofr.Context) (interface{}, error) {
+func Create(ctx *gofr.Context) (any, error) {
 	name := ctx.Param("name")
 	gofrVersion := ctx.Param("gofr")
 
