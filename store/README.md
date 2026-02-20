@@ -18,16 +18,16 @@ go install gofr.dev/cli/gofr@latest
    ```bash
    gofr store init -name=user
    ```
-   This creates the following in `stores/user/`:
-   - `store.yaml` — configuration template
-   - `interface.go` — initial interface stub
-   - `user.go` — initial implementation stub
+   This creates:
+   - `stores/store.yaml` — central configuration template
+   - `stores/user/interface.go` — initial interface stub
+   - `stores/user/user.go` — initial implementation stub
 
-2. **Edit `stores/user/store.yaml`** with your models and queries (see Configuration Reference below).
+2. **Edit `stores/store.yaml`** with your models and queries (see Configuration Reference below).
 
 3. **Generate the store code:**
    ```bash
-   gofr store generate -config=stores/user/store.yaml
+   gofr store generate
    ```
 
 4. **Use in your application:**
@@ -52,7 +52,7 @@ gofr store init -name=<store-name>
 gofr store generate
 
 # Generate store code from a specific config file
-gofr store generate -config=stores/user/store.yaml
+gofr store generate -config=custom-store.yaml
 ```
 
 ### Project Structure
