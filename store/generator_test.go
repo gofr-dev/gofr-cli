@@ -1138,3 +1138,66 @@ func Test_createNewAllFile(t *testing.T) {
 	assert.Contains(t, contentStr, "user.NewUser()")
 	assert.Contains(t, contentStr, "product.NewProduct()")
 }
+
+func Test_InitStore(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	c := container.NewContainer(gofrConfig.NewEnvFile("", logging.NewMockLogger(logging.DEBUG)))
+	req := cmd.NewRequest([]string{"executable", "store", "init", "-name=user"})
+
+	ctx := &gofr.Context{
+		Context:   req.Context(),
+		Request:   req,
+		Container: c,
+	}
+
+	_, err := InitStore(ctx)
+	require.NoError(t, err)
+
+	// Verify stores directory structure
+	assert.DirExists(t, "stores")
+	assert.DirExists(t, filepath.Join("stores", "user"))
+
+	// Verify store.yaml is in stores/ directory
+	assert.FileExists(t, filepath.Join("stores", "store.yaml"))
+
+	// Verify store.yaml content
+	content, err := os.ReadFile(filepath.Join("stores", "store.yaml"))
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "user")
+	assert.Contains(t, contentStr, "stores/user")
+
+	// Verify initial interface and implementation are in stores/user/
+	assert.FileExists(t, filepath.Join("stores", "user", "interface.go"))
+	assert.FileExists(t, filepath.Join("stores", "user", "user.go"))
+}
+
+func Test_InitStore_Append(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	c := container.NewContainer(gofrConfig.NewEnvFile("", logging.NewMockLogger(logging.DEBUG)))
+
+	// Initial store
+	req1 := cmd.NewRequest([]string{"executable", "store", "init", "-name=user"})
+	ctx1 := &gofr.Context{Context: req1.Context(), Request: req1, Container: c}
+	_, err := InitStore(ctx1)
+	require.NoError(t, err)
+
+	// Append second store
+	req2 := cmd.NewRequest([]string{"executable", "store", "init", "-name=product"})
+	ctx2 := &gofr.Context{Context: req2.Context(), Request: req2, Container: c}
+	_, err = InitStore(ctx2)
+	require.NoError(t, err)
+
+	// Verify both exist in store.yaml
+	content, err := os.ReadFile(filepath.Join("stores", "store.yaml"))
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	assert.Contains(t, contentStr, "name: user")
+	assert.Contains(t, contentStr, "name: product")
+}

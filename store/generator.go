@@ -141,7 +141,7 @@ func InitStore(ctx *gofr.Context) (any, error) {
 		return nil, fmt.Errorf("failed to create store directory: %w", err)
 	}
 
-	if err := generateStoreConfig(ctx, storeName, storeDir); err != nil {
+	if err := generateStoreConfig(ctx, storeName, "stores"); err != nil {
 		return nil, fmt.Errorf("failed to generate store config: %w", err)
 	}
 
@@ -196,10 +196,15 @@ func GenerateStore(ctx *gofr.Context) (any, error) {
 
 	newStores := make([]Entry, 0, len(cfg.Stores))
 	for i := range cfg.Stores {
+		interfaceName := cfg.Stores[i].Interface
+		if interfaceName == "" {
+			interfaceName = cases.Title(language.English).String(cfg.Stores[i].Name) + "Store"
+		}
+
 		newStores = append(newStores, Entry{
 			Name:          cfg.Stores[i].Name,
-			PackageName:   strings.ToLower(cfg.Stores[i].Name),
-			InterfaceName: cases.Title(language.English).String(cfg.Stores[i].Name) + "Store",
+			PackageName:   cfg.Stores[i].Package,
+			InterfaceName: interfaceName,
 		})
 	}
 
@@ -652,9 +657,15 @@ func generateModelFile(ctx *gofr.Context, modelFile string, store *Info, model *
 	return nil
 }
 
-// generateStoreConfig creates the initial store.yaml configuration file.
-func generateStoreConfig(ctx *gofr.Context, storeName, storeDir string) error {
-	configFile := filepath.Join(storeDir, "store.yaml")
+// generateStoreConfig creates the initial store.yaml configuration file or appends to an existing one.
+func generateStoreConfig(ctx *gofr.Context, storeName, storesDir string) error {
+	configFile := filepath.Join(storesDir, "store.yaml")
+	storeDir := fmt.Sprintf("stores/%s", strings.ToLower(storeName))
+
+	// If file exists, append to it
+	if _, err := os.Stat(configFile); err == nil {
+		return appendToStoreConfig(ctx, configFile, storeName, storeDir)
+	}
 
 	t, err := template.New("config").Parse(StoreConfigTemplate)
 	if err != nil {
@@ -668,11 +679,13 @@ func generateStoreConfig(ctx *gofr.Context, storeName, storeDir string) error {
 	defer file.Close()
 
 	data := struct {
+		StoreName          string
 		PackageName        string
 		OutputDir          string
 		InterfaceName      string
 		ImplementationName string
 	}{
+		StoreName:          storeName,
 		PackageName:        strings.ToLower(storeName),
 		OutputDir:          storeDir,
 		InterfaceName:      cases.Title(language.English).String(storeName) + "Store",
@@ -684,6 +697,44 @@ func generateStoreConfig(ctx *gofr.Context, storeName, storeDir string) error {
 	}
 
 	ctx.Logger.Infof("Generated config file: %s", configFile)
+
+	return nil
+}
+
+// appendToStoreConfig appends a new store to the existing store.yaml.
+func appendToStoreConfig(ctx *gofr.Context, configFile, storeName, storeDir string) error {
+	cfg, err := parseConfigFile(ctx, configFile)
+	if err != nil {
+		return err
+	}
+
+	// Check if store already exists
+	for _, s := range cfg.Stores {
+		if s.Name == storeName {
+			return nil // Already exists
+		}
+	}
+
+	newStore := Info{
+		Name:           storeName,
+		Package:        strings.ToLower(storeName),
+		OutputDir:      storeDir,
+		Interface:      cases.Title(language.English).String(storeName) + "Store",
+		Implementation: strings.ToLower(storeName),
+	}
+
+	cfg.Stores = append(cfg.Stores, newStore)
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(configFile, data, defaultFilePerm); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	ctx.Logger.Infof("Appended store %s to config file: %s", storeName, configFile)
 
 	return nil
 }

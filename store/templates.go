@@ -190,7 +190,7 @@ models:
 
 # Multiple stores configuration
 stores:
-  - name: "{{ .PackageName }}"
+  - name: "{{ .StoreName }}"
     package: "{{ .PackageName }}"
     output_dir: "{{ .OutputDir }}"
     interface: "{{ .InterfaceName }}"

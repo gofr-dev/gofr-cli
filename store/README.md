@@ -16,22 +16,25 @@ go install gofr.dev/cli/gofr@latest
 
 1. **Initialize a store configuration:**
    ```bash
-   gofr store init
+   gofr store init -name=user
    ```
-   This creates a `store.yaml` file with example configuration.
+   This creates the following in `stores/user/`:
+   - `store.yaml` — configuration template
+   - `interface.go` — initial interface stub
+   - `user.go` — initial implementation stub
 
-2. **Edit `store.yaml`** with your models and queries (see Configuration Reference below).
+2. **Edit `stores/user/store.yaml`** with your models and queries (see Configuration Reference below).
 
 3. **Generate the store code:**
    ```bash
-   gofr store generate
+   gofr store generate -config=stores/user/store.yaml
    ```
 
 4. **Use in your application:**
    ```go
    import "your-project/stores/user"
-   
-   userStore := user.NewUser()
+
+   userStore := user.NewUserStore()
    result, err := userStore.GetUserByID(ctx, 123)
    ```
 
@@ -40,11 +43,16 @@ go install gofr.dev/cli/gofr@latest
 ### Commands
 
 ```bash
-# Initialize a new store.yaml configuration file
-gofr store init
+# Initialize a new store directory and store.yaml configuration file
+# The -name flag is required
+gofr store init -name=<store-name>
 
-# Generate store code from store.yaml
+# Generate store code from a store.yaml
+# Default config path: stores/store.yaml
 gofr store generate
+
+# Generate store code from a specific config file
+gofr store generate -config=stores/user/store.yaml
 ```
 
 ### Project Structure
@@ -53,11 +61,11 @@ After generation, your project will have:
 
 ```
 stores/
-├── all.go              # Store registry (auto-generated)
-├── user/
-│   ├── interface.go    # UserStore interface
-│   ├── store.go         # UserStore implementation
-│   └── user.go          # User model (if generated)
+├── all.go              # Store registry factory (auto-generated)
+└── user/
+    ├── interface.go    # UserStore interface
+    ├── userStore.go    # userStore implementation boilerplate
+    └── user.go         # User model (if generated)
 ```
 
 ### Using Generated Stores
@@ -66,18 +74,23 @@ stores/
 ```go
 import "your-project/stores/user"
 
-userStore := user.NewUser()
+userStore := user.NewUserStore()
 result, err := userStore.GetUserByID(ctx, id)
 ```
 
 **Option 2: Using the registry**
 ```go
-import "your-project/stores"
+import (
+    "your-project/stores"
+    "your-project/stores/user"
+)
 
-allStores := stores.All()
-userStore := stores.GetStore("user").(user.User)
+// GetStore returns a factory-created instance; cast to the correct interface
+userStore := stores.GetStore("user").(user.UserStore)
 result, err := userStore.GetUserByID(ctx, id)
 ```
+
+> **💡 Note:** `stores.All()` returns a `map[string]func() any` — a map of **factory functions**, not active instances. Use `stores.GetStore(name)` for convenient access.
 
 ### Integration Example
 
@@ -91,7 +104,7 @@ import (
 
 func main() {
     app := gofr.New()
-    userStore := user.NewUser()
+    userStore := user.NewUserStore()
 
     app.GET("/users/{id}", func(ctx *gofr.Context) (interface{}, error) {
         id, _ := strconv.ParseInt(ctx.PathParam("id"), 10, 64)
@@ -113,7 +126,7 @@ stores:
   - name: "user"
     package: "user"
     output_dir: "stores/user"
-    interface: "User"
+    interface: "UserStore"
     implementation: "userStore"
     queries:
       - name: "GetUserByID"
@@ -146,9 +159,11 @@ models:
 | `name` | Store identifier (used in registry) | Yes |
 | `package` | Go package name | Yes |
 | `output_dir` | Directory for generated files | Yes |
-| `interface` | Interface name (e.g., "User") | Yes |
-| `implementation` | Implementation struct name | Yes |
+| `interface` | Interface name — **recommended: `<Name>Store`** (e.g., `UserStore`) | Yes |
+| `implementation` | Implementation struct name (e.g., `userStore`) | Yes |
 | `queries` | Array of database queries | Yes |
+
+> **⚠️ Naming Convention:** The registry (`stores/all.go`) automatically appends `"Store"` when building constructor calls. To avoid compilation errors, always name your interface as `<Name>Store` (e.g., `UserStore`) and the generated constructor will be `New<Name>Store()`.
 
 ### Models
 
@@ -185,10 +200,10 @@ models:
 - `delete` - DELETE queries
 
 **Return Types:**
-- `single` - Returns a single model instance
-- `multiple` - Returns a slice of models
-- `count` - Returns `int64` count
-- `custom` - Returns `interface{}`
+- `single` - Returns `(*Model, error)`
+- `multiple` - Returns `([]Model, error)`
+- `count` - Returns `(int64, error)`
+- `custom` - Returns `(any, error)`
 
 **Example Query:**
 ```yaml
@@ -206,6 +221,8 @@ queries:
 
 ### Multiple Stores
 
+You can define multiple stores in a single YAML file. Each store gets its own directory and the registry (`stores/all.go`) tracks all of them.
+
 ```yaml
 version: "1.0"
 
@@ -213,14 +230,14 @@ stores:
   - name: "user"
     package: "user"
     output_dir: "stores/user"
-    interface: "User"
+    interface: "UserStore"
     implementation: "userStore"
     queries: [...]
 
   - name: "product"
     package: "product"
     output_dir: "stores/product"
-    interface: "Product"
+    interface: "ProductStore"
     implementation: "productStore"
     queries: [...]
 
@@ -229,6 +246,12 @@ models:
     fields: [...]
   - name: "Product"
     fields: [...]
+```
+
+**Accessing multiple stores from the registry:**
+```go
+userStore    := stores.GetStore("user").(user.UserStore)
+productStore := stores.GetStore("product").(product.ProductStore)
 ```
 
 ## Generated Code Examples
@@ -240,8 +263,8 @@ package user
 
 import "gofr.dev/pkg/gofr"
 
-type User interface {
-    GetUserByID(ctx *gofr.Context, id int64) (User, error)
+type UserStore interface {
+    GetUserByID(ctx *gofr.Context, id int64) (*User, error)
     GetAllUsers(ctx *gofr.Context) ([]User, error)
 }
 ```
@@ -253,15 +276,17 @@ package user
 
 type userStore struct{}
 
-func NewUser() User {
+func NewUserStore() UserStore {
     return &userStore{}
 }
 
-func (s *userStore) GetUserByID(ctx *gofr.Context, id int64) (User, error) {
+func (s *userStore) GetUserByID(ctx *gofr.Context, id int64) (*User, error) {
     // TODO: Implement query using ctx.SQL()
-    return User{}, nil
+    return &User{}, nil
 }
 ```
+
+> **💡 Note:** The generator creates method **signatures and boilerplate only**. You must implement the actual SQL execution in the `// TODO` sections using `ctx.SQL()` methods.
 
 ### Model
 ```go
@@ -278,3 +303,12 @@ func (User) TableName() string {
     return "user"
 }
 ```
+
+## Best Practices
+
+1. **Never Edit Generated Files**: Files marked `DO NOT EDIT` (`interface.go`, `all.go`) are overwritten on every generation. Keep custom SQL logic in your implementation file (e.g., `userStore.go`).
+2. **Use `<Name>Store` Interface Names**: This ensures the registry and constructor align correctly.
+3. **Commit your YAML**: Treat `store.yaml` as source of truth. Re-run `gofr store generate` after every change.
+4. **Reference Existing Models**: If you already have model structs, use the `path` + `package` fields to avoid duplication.
+
+For a complete working example, see [`store/example.yaml`](./example.yaml).
