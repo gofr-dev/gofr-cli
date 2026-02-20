@@ -61,6 +61,7 @@ After generation, your project will have:
 
 ```
 stores/
+├── store.yaml          # Central configuration
 ├── all.go              # Store registry factory (auto-generated)
 └── user/
     ├── interface.go    # UserStore interface
@@ -156,12 +157,12 @@ models:
 
 | Field | Description | Required |
 |-------|-------------|----------|
-| `name` | Store identifier (used in registry) | Yes |
-| `package` | Go package name | Yes |
-| `output_dir` | Directory for generated files | Yes |
-| `interface` | Interface name — **recommended: `<Name>Store`** (e.g., `UserStore`) | Yes |
-| `implementation` | Implementation struct name (e.g., `userStore`) | Yes |
-| `queries` | Array of database queries | Yes |
+| `name` | Store identifier (used in registry) | **Yes** |
+| `package` | Go package name | **Yes** |
+| `output_dir` | Directory for generated files | Optional (defaults to `stores/<name>`) |
+| `interface` | Interface name — **recommended: `<Name>Store`** (e.g., `UserStore`) | Optional (defaults to `<Name>Store`) |
+| `implementation` | Implementation struct name (e.g., `userStore`) | Optional (defaults to `<name>Store`) |
+| `queries` | Array of database queries | **Yes** |
 
 > **⚠️ Naming Convention:** The registry (`stores/all.go`) automatically appends `"Store"` when building constructor calls. To avoid compilation errors, always name your interface as `<Name>Store` (e.g., `UserStore`) and the generated constructor will be `New<Name>Store()`.
 
@@ -200,7 +201,7 @@ models:
 - `delete` - DELETE queries
 
 **Return Types:**
-- `single` - Returns `(*Model, error)`
+- `single` - Returns `(Model, error)`
 - `multiple` - Returns `([]Model, error)`
 - `count` - Returns `(int64, error)`
 - `custom` - Returns `(any, error)`
@@ -264,7 +265,7 @@ package user
 import "gofr.dev/pkg/gofr"
 
 type UserStore interface {
-    GetUserByID(ctx *gofr.Context, id int64) (*User, error)
+    GetUserByID(ctx *gofr.Context, id int64) (User, error)
     GetAllUsers(ctx *gofr.Context) ([]User, error)
 }
 ```
@@ -280,9 +281,11 @@ func NewUserStore() UserStore {
     return &userStore{}
 }
 
-func (s *userStore) GetUserByID(ctx *gofr.Context, id int64) (*User, error) {
+func (s *userStore) GetUserByID(ctx *gofr.Context, id int64) (User, error) {
     // TODO: Implement query using ctx.SQL()
-    return &User{}, nil
+    var result User
+    // err := ctx.SQL().QueryRowContext(ctx, sql, id).Scan(&result.ID, ...)
+    return result, nil
 }
 ```
 

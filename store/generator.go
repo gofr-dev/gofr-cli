@@ -307,6 +307,11 @@ func generateSingleStore(ctx *gofr.Context, cfg *Config, store *Info) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
+	// Default implementation name if empty
+	if store.Implementation == "" {
+		store.Implementation = strings.ToLower(store.Name) + "Store"
+	}
+
 	storeConfig := &Config{
 		Version: cfg.Version,
 		Models:  cfg.Models,
@@ -974,81 +979,62 @@ func handleImportSection(lines, importsToAdd []string) []string {
 		return lines
 	}
 
-	importInsertIdx := findImportInsertionPoint(lines)
-	if importInsertIdx > 0 {
-		formattedImports := formatImports(importsToAdd)
-		return insertLines(lines, importInsertIdx, formattedImports)
-	}
-
-	return createImportSection(lines, importsToAdd)
-}
-
-// createImportSection creates a new import section.
-func createImportSection(lines, importsToAdd []string) []string {
-	insertIdx := -1
-
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "package ") {
-			insertIdx = i + 1
-			break
-		}
-	}
-
+	insertIdx := findImportInsertionPoint(lines)
 	if insertIdx == -1 {
-		insertIdx = 1
-	}
+		// No import block found, let's look for the package line
+		packageIdx := -1
 
-	importSection := []string{""}
-	if len(importsToAdd) > 0 {
-		importSection = append(importSection, "import (")
-		formattedImports := formatImports(importsToAdd)
-		importSection = append(importSection, formattedImports...)
-		importSection = append(importSection, ")")
-	}
-
-	return insertLines(lines, insertIdx, importSection)
-}
-
-// formatImports formats a list of imports.
-func formatImports(importsToAdd []string) []string {
-	formatted := make([]string, len(importsToAdd))
-
-	for i, imp := range importsToAdd {
-		formattedImp := strings.TrimSpace(imp)
-		if !strings.HasPrefix(formattedImp, `"`) {
-			formattedImp = fmt.Sprintf("%q", formattedImp)
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "package ") {
+				packageIdx = i
+				break
+			}
 		}
 
-		formatted[i] = fmt.Sprintf(`    %s`, formattedImp)
+		if packageIdx == -1 {
+			return append([]string{"import ("}, append(importsToAdd, ")...")...)
+		}
+
+		newLines := []string{"", "import ("}
+		for _, imp := range importsToAdd {
+			newLines = append(newLines, fmt.Sprintf("    %q", canonicalizeImport(imp)))
+		}
+
+		newLines = append(newLines, ")")
+
+		return insertLines(lines, packageIdx+1, newLines)
 	}
 
-	return formatted
+	formattedImports := make([]string, len(importsToAdd))
+	for i, imp := range importsToAdd {
+		formattedImports[i] = fmt.Sprintf("    %q", canonicalizeImport(imp))
+	}
+
+	return insertLines(lines, insertIdx, formattedImports)
 }
 
 // parseExistingAllFile parses the existing all.go file.
 func parseExistingAllFile(lines []string) (existingStores, existingImports map[string]bool) {
 	existingStores = make(map[string]bool)
 	existingImports = make(map[string]bool)
-	inImportSection := false
+
+	inImport := false
 
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
-		if strings.Contains(trimmedLine, "import (") {
-			inImportSection = true
+		if trimmedLine == "import (" {
+			inImport = true
 			continue
 		}
 
-		if inImportSection {
-			if trimmedLine == ")" {
-				inImportSection = false
-				continue
-			}
+		if inImport && trimmedLine == ")" {
+			inImport = false
+			continue
+		}
 
-			if strings.Contains(trimmedLine, `"`) {
-				existingImports[strings.TrimSpace(trimmedLine)] = true
-			}
-
+		if inImport {
+			existingImports[trimmedLine] = true
 			continue
 		}
 
