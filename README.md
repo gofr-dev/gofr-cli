@@ -39,6 +39,7 @@ To get started with GoFr CLI, use the below commands
 ```bash
   go install gofr.dev/cli/gofr@latest
 ```
+> *Note:* If your terminal returns a command not found: gofr error after running the install command, ensure that your Go binary path (usually $GOPATH/bin or $HOME/go/bin) has been added to your system's PATH environment variable.
 
 To check the installation:
 ```bash
