@@ -33,15 +33,15 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-// New{{ .Service }}GoFrServer creates a new instance of {{ .Service }}GoFrServer
-func New{{ .Service }}GoFrServer() *{{ .Service }}GoFrServer {
-	return &{{ .Service }}GoFrServer{
+// New{{ .Service }}GoFrService creates a new instance of {{ .Service }}GoFrService
+func New{{ .Service }}GoFrService() *{{ .Service }}GoFrService {
+	return &{{ .Service }}GoFrService{
 		health: getOrCreateHealthServer(), // Initialize the health server
 	}
 }
 
-// {{ .Service }}ServerWithGofr is the interface for the server implementation
-type {{ .Service }}ServerWithGofr interface {
+// {{ .Service }}ServiceWithGofr is the interface for the server implementation
+type {{ .Service }}ServiceWithGofr interface {
 {{- range .Methods }}
 {{- if or .StreamsRequest .StreamsResponse }}
 	{{ .Name }}(*gofr.Context, {{ $.Service }}_{{ .Name }}Server) error
@@ -51,12 +51,12 @@ type {{ .Service }}ServerWithGofr interface {
 {{- end }}
 }
 
-// {{ .Service }}ServerWrapper wraps the server and handles request and response logic
-type {{ .Service }}ServerWrapper struct {
+// {{ .Service }}ServiceWrapper wraps the server and handles request and response logic
+type {{ .Service }}ServiceWrapper struct {
 	{{ .Service }}Server
 	*healthServer
 	Container *container.Container
-	server    {{ .Service }}ServerWithGofr
+	server    {{ .Service }}ServiceWithGofr
 }
 
 {{- $hasStream := false }}
@@ -220,7 +220,7 @@ func (w *bidiStreamWrapper{{ .Name }}) CloseSend() error {
 {{- if .StreamsResponse }}
 {{- if not .StreamsRequest }}
 // Server-side streaming handler for {{ .Name }}
-func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(req *{{ .Request }}, stream {{ $.Service }}_{{ .Name }}Server) error {
+func (h *{{ $.Service }}ServiceWrapper) {{ .Name }}(req *{{ .Request }}, stream {{ $.Service }}_{{ .Name }}Server) error {
 	ctx := stream.Context()
 	gctx := h.getGofrContext(ctx, &{{ .Request }}Wrapper{ctx: ctx, {{ .Request }}: req})
 	
@@ -235,7 +235,7 @@ func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(req *{{ .Request }}, stream {
 }
 {{- else }}
 // Bidirectional streaming handler for {{ .Name }}
-func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(stream {{ $.Service }}_{{ .Name }}Server) error {
+func (h *{{ $.Service }}ServiceWrapper) {{ .Name }}(stream {{ $.Service }}_{{ .Name }}Server) error {
 	ctx := stream.Context()
 	gctx := h.getGofrContext(ctx, nil)
 	
@@ -251,7 +251,7 @@ func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(stream {{ $.Service }}_{{ .Na
 {{- end }}
 {{- else if .StreamsRequest }}
 // Client-side streaming handler for {{ .Name }}
-func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(stream {{ $.Service }}_{{ .Name }}Server) error {
+func (h *{{ $.Service }}ServiceWrapper) {{ .Name }}(stream {{ $.Service }}_{{ .Name }}Server) error {
 	ctx := stream.Context()
 	gctx := h.getGofrContext(ctx, nil)
 	
@@ -266,7 +266,7 @@ func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(stream {{ $.Service }}_{{ .Na
 }
 {{- else }}
 // Unary method handler for {{ .Name }}
-func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(ctx context.Context, req *{{ .Request }}) (*{{ .Response }}, error) {
+func (h *{{ $.Service }}ServiceWrapper) {{ .Name }}(ctx context.Context, req *{{ .Request }}) (*{{ .Response }}, error) {
 	gctx := h.getGofrContext(ctx, &{{ .Request }}Wrapper{ctx: ctx, {{ .Request }}: req})
 	
 	res, err := h.server.{{ .Name }}(gctx)
@@ -285,13 +285,13 @@ func (h *{{ $.Service }}ServerWrapper) {{ .Name }}(ctx context.Context, req *{{ 
 {{- end }}
 
 // mustEmbedUnimplemented{{ .Service }}Server ensures implementation
-func (h *{{ .Service }}ServerWrapper) mustEmbedUnimplemented{{ .Service }}Server() {}
+func (h *{{ .Service }}ServiceWrapper) mustEmbedUnimplemented{{ .Service }}Server() {}
 
-// Register{{ .Service }}ServerWithGofr registers the server
-func Register{{ .Service }}ServerWithGofr(app *gofr.App, srv {{ .Service }}ServerWithGofr) {
+// Register{{ .Service }}ServiceWithGofr registers the server
+func Register{{ .Service }}ServiceWithGofr(app *gofr.App, srv {{ .Service }}ServiceWithGofr) {
 	registerServerWithGofr(app, srv, func(s grpc.ServiceRegistrar, srv any) {
-		wrapper := &{{ .Service }}ServerWrapper{
-			server: srv.({{ .Service }}ServerWithGofr),
+		wrapper := &{{ .Service }}ServiceWrapper{
+			server: srv.({{ .Service }}ServiceWithGofr),
 			healthServer: getOrCreateHealthServer(),
 		}
 
@@ -302,7 +302,7 @@ func Register{{ .Service }}ServerWithGofr(app *gofr.App, srv {{ .Service }}Serve
 }
 
 // getGofrContext creates GoFr context
-func (h *{{ .Service }}ServerWrapper) getGofrContext(ctx context.Context, req gofr.Request) *gofr.Context {
+func (h *{{ .Service }}ServiceWrapper) getGofrContext(ctx context.Context, req gofr.Request) *gofr.Context {
 	return &gofr.Context{
 		Context:   ctx,
 		Container: h.Container,
@@ -388,28 +388,28 @@ import "gofr.dev/pkg/gofr"
 
 // Register the gRPC service in your app using the following code in your main.go:
 //
-// {{ .Package }}.Register{{ $.Service }}ServerWithGofr(app, &{{ .Package }}.New{{ $.Service }}GoFrServer())
+// {{ .Package }}.Register{{ $.Service }}ServiceWithGofr(app, &{{ .Package }}.New{{ $.Service }}GoFrService())
 //
-// {{ $.Service }}GoFrServer defines the gRPC server implementation.
+// {{ $.Service }}GoFrService defines the gRPC server implementation.
 // Customize the struct with required dependencies and fields as needed.
 
-type {{ $.Service }}GoFrServer struct {
+type {{ $.Service }}GoFrService struct {
  health *healthServer
 }
 
 {{- range .Methods }}
 {{- if .StreamsRequest }}
-func (s *{{ $.Service }}GoFrServer) {{ .Name }}(ctx *gofr.Context, stream {{ $.Service }}_{{ .Name }}Server) error {
+func (s *{{ $.Service }}GoFrService) {{ .Name }}(ctx *gofr.Context, stream {{ $.Service }}_{{ .Name }}Server) error {
 	// Implementation here
 	return nil
 }
 {{- else if .StreamsResponse }}
-func (s *{{ $.Service }}GoFrServer) {{ .Name }}(ctx *gofr.Context, stream {{ $.Service }}_{{ .Name }}Server) error {
+func (s *{{ $.Service }}GoFrService) {{ .Name }}(ctx *gofr.Context, stream {{ $.Service }}_{{ .Name }}Server) error {
 	// Implementation here
 	return nil
 }
 {{- else }}
-func (s *{{ $.Service }}GoFrServer) {{ .Name }}(ctx *gofr.Context) (any, error) {
+func (s *{{ $.Service }}GoFrService) {{ .Name }}(ctx *gofr.Context) (any, error) {
 	return &{{ .Response }}{}, nil
 }
 {{- end }}
