@@ -90,6 +90,43 @@ func TestGenerateGoFrServer_Naming(t *testing.T) {
 	assert.NotContains(t, out, "HelloGoFrServer")
 }
 
+// unaryOnlyData is a service with no streaming methods, to exercise the
+// stream-only import gating.
+func unaryOnlyData() *WrapperData {
+	return &WrapperData{
+		Package:  "hello",
+		Service:  "Hello",
+		Source:   "hello.proto",
+		Methods:  []ServiceMethod{{Name: "SayHello", Request: "HelloRequest", Response: "HelloResponse"}},
+		Requests: []ServiceRequest{{Request: "HelloRequest"}},
+	}
+}
+
+// The request wrapper must be named after the request type, not the printed
+// ServiceRequest struct (which produced "{HelloRequest HelloRequest}Wrapper"
+// and broke compilation). Found while running the generated server end-to-end.
+func TestGenerateGoFrRequestWrapper_UsesRequestName(t *testing.T) {
+	out := generateGoFrRequestWrapper(createTestContext(), testWrapperData())
+
+	assert.Contains(t, out, "type HelloRequestWrapper struct {")
+	assert.Contains(t, out, "*HelloRequest")
+	assert.NotContains(t, out, "{HelloRequest", "the ServiceRequest struct must not be printed verbatim")
+}
+
+// time and the gofr gRPC logger are only used by the streaming instrumentation,
+// so they must be imported only when the service has a streaming method —
+// otherwise a unary-only service fails to compile with "imported and not used".
+// Found while running the generated server end-to-end.
+func TestServerWrapperImports_GatedOnStreaming(t *testing.T) {
+	streaming := generateGoFrServerWrapper(createTestContext(), testWrapperData())
+	assert.Contains(t, streaming, `"time"`)
+	assert.Contains(t, streaming, "gofrgRPC")
+
+	unary := generateGoFrServerWrapper(createTestContext(), unaryOnlyData())
+	assert.NotContains(t, unary, `"time"`, "unary-only service must not import the stream-only time dep")
+	assert.NotContains(t, unary, "gofrgRPC", "unary-only service must not import the stream-only gRPC logger")
+}
+
 // The client template is unrelated to the Server->Service rename and must keep
 // its GoFrClient / protoc client naming intact.
 func TestGenerateGoFrClient_NamingUnaffected(t *testing.T) {

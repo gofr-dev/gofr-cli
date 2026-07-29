@@ -14,22 +14,33 @@ const (
     {{- end }}
 {{- end }}
 
+{{- $hasStream := false }}
+{{- range .Methods }}
+    {{- if or .StreamsRequest .StreamsResponse }}
+        {{- $hasStream = true }}
+    {{- end }}
+{{- end }}
+
 package {{ .Package }}
 
 import (
 	"context"
+	{{- if $hasStream }}
 	"time"
-	
+	{{- end }}
+
 	"gofr.dev/pkg/gofr"
 	"gofr.dev/pkg/gofr/container"
+	{{- if $hasStream }}
 	gofrgRPC "gofr.dev/pkg/gofr/grpc"
+	{{- end }}
 	"google.golang.org/grpc"
 
 	{{- if $hasUnary }}
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	{{- end }}
-	
+
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
@@ -58,13 +69,6 @@ type {{ .Service }}ServiceWrapper struct {
 	Container *container.Container
 	server    {{ .Service }}ServiceWithGofr
 }
-
-{{- $hasStream := false }}
-{{- range .Methods }}
-    {{- if or .StreamsRequest .StreamsResponse }}
-        {{- $hasStream = true }}
-    {{- end }}
-{{- end }}
 
 {{- if $hasStream }}
 // Base instrumented stream
@@ -328,30 +332,30 @@ import (
 
 // Request Wrappers
 {{- range $request := .Requests }}
-type {{ $request }}Wrapper struct {
+type {{ $request.Request }}Wrapper struct {
 	ctx context.Context
-	*{{ $request }}
+	*{{ $request.Request }}
 }
 
-func (h *{{ $request }}Wrapper) Context() context.Context {
+func (h *{{ $request.Request }}Wrapper) Context() context.Context {
 	return h.ctx
 }
 
-func (h *{{ $request }}Wrapper) Param(s string) string {
+func (h *{{ $request.Request }}Wrapper) Param(s string) string {
 	return ""
 }
 
-func (h *{{ $request }}Wrapper) PathParam(s string) string {
+func (h *{{ $request.Request }}Wrapper) PathParam(s string) string {
 	return ""
 }
 
-func (h *{{ $request }}Wrapper) Bind(p interface{}) error {
+func (h *{{ $request.Request }}Wrapper) Bind(p interface{}) error {
 	ptr := reflect.ValueOf(p)
 	if ptr.Kind() != reflect.Ptr {
 		return fmt.Errorf("expected a pointer, got %T", p)
 	}
 
-	hValue := reflect.ValueOf(h.{{ $request }}).Elem()
+	hValue := reflect.ValueOf(h.{{ $request.Request }}).Elem()
 	ptrValue := ptr.Elem()
 
 	for i := 0; i < hValue.NumField(); i++ {
@@ -368,11 +372,11 @@ func (h *{{ $request }}Wrapper) Bind(p interface{}) error {
 	return nil
 }
 
-func (h *{{ $request }}Wrapper) HostName() string {
+func (h *{{ $request.Request }}Wrapper) HostName() string {
 	return ""
 }
 
-func (h *{{ $request }}Wrapper) Params(s string) []string {
+func (h *{{ $request.Request }}Wrapper) Params(s string) []string {
 	return nil
 }
 {{- end }}`
