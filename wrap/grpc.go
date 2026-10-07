@@ -469,7 +469,13 @@ func getImports(ctx *gofr.Context, definition *proto.Proto, protoPath string) []
 			}
 
 			lastPiece := strings.LastIndex(packageName, ".")
-			formattedImport := fmt.Sprintf("%s %q", packageName[lastPiece+1:], packageSource)
+			if lastPiece == -1 {
+				lastPiece = 0
+			} else {
+				lastPiece++
+			}
+
+			formattedImport := fmt.Sprintf("%s %q", packageName[lastPiece:], packageSource)
 			imports = append(imports, formattedImport)
 		}
 	}
