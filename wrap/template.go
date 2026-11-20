@@ -14,6 +14,13 @@ const (
     {{- end }}
 {{- end }}
 
+{{- $hasStream := false }}
+{{- range .Methods }}
+    {{- if or .StreamsRequest .StreamsResponse }}
+        {{- $hasStream = true }}
+    {{- end }}
+{{- end }}
+
 package {{ .Package }}
 
 import (
@@ -24,6 +31,11 @@ import (
 	"gofr.dev/pkg/gofr/container"
 	gofrgRPC "gofr.dev/pkg/gofr/grpc"
 	"google.golang.org/grpc"
+
+	{{- if $hasStream }}
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
+	{{- end }}
 
 	{{- if $hasUnary }}
 	"google.golang.org/grpc/codes"
@@ -59,13 +71,6 @@ type {{ .Service }}ServiceWrapper struct {
 	server    {{ .Service }}ServiceWithGofr
 }
 
-{{- $hasStream := false }}
-{{- range .Methods }}
-    {{- if or .StreamsRequest .StreamsResponse }}
-        {{- $hasStream = true }}
-    {{- end }}
-{{- end }}
-
 {{- if $hasStream }}
 // Base instrumented stream
 type instrumentedStream struct {
@@ -78,9 +83,18 @@ func (s *instrumentedStream) Context() context.Context {
 	return s.ctx
 }
 
+// startSpan starts a span for one stream operation without changing s.ctx. Send and Recv
+// are often called from a goroutine the handler started while the handler still uses
+// s.ctx, so assigning the span's context back (as ctx.Trace does) would be a data race.
+func (s *instrumentedStream) startSpan(name string) trace.Span {
+	_, span := otel.GetTracerProvider().Tracer("gofr-context").Start(s.ctx, name)
+
+	return span
+}
+
 func (s *instrumentedStream) SendMsg(m interface{}) error {
 	start := time.Now()
-	span := s.ctx.Trace(s.method + "/SendMsg")
+	span := s.startSpan(s.method + "/SendMsg")
 	defer span.End()
 
 	err := s.ServerStream.SendMsg(m)
@@ -94,7 +108,7 @@ func (s *instrumentedStream) SendMsg(m interface{}) error {
 
 func (s *instrumentedStream) RecvMsg(m interface{}) error {
 	start := time.Now()
-	span := s.ctx.Trace(s.method + "/RecvMsg")
+	span := s.startSpan(s.method + "/RecvMsg")
 	defer span.End()
 
 	err := s.ServerStream.RecvMsg(m)
@@ -116,7 +130,7 @@ type clientStreamWrapper{{ .Name }} struct {
 
 func (w *clientStreamWrapper{{ .Name }}) SendAndClose(m *{{ .Response }}) error {
 	start := time.Now()
-	span := w.ctx.Trace(w.method + "/SendAndClose")
+	span := w.startSpan(w.method + "/SendAndClose")
 	defer span.End()
 	
 	err := w.ServerStream.SendMsg(m)
@@ -130,7 +144,7 @@ func (w *clientStreamWrapper{{ .Name }}) SendAndClose(m *{{ .Response }}) error 
 
 func (w *clientStreamWrapper{{ .Name }}) Recv() (*{{ .Request }}, error) {
 	start := time.Now()
-	span := w.ctx.Trace(w.method + "/Recv")
+	span := w.startSpan(w.method + "/Recv")
 	defer span.End()
 	
 	var req {{ .Request }}
@@ -153,7 +167,7 @@ type serverStreamWrapper{{ .Name }} struct {
 
 func (w *serverStreamWrapper{{ .Name }}) Send(m *{{ .Response }}) error {
 	start := time.Now()
-	span := w.ctx.Trace(w.method + "/Send")
+	span := w.startSpan(w.method + "/Send")
 	defer span.End()
 	
 	err := w.ServerStream.SendMsg(m)
@@ -172,7 +186,7 @@ type bidiStreamWrapper{{ .Name }} struct {
 
 func (w *bidiStreamWrapper{{ .Name }}) Send(m *{{ .Response }}) error {
 	start := time.Now()
-	span := w.ctx.Trace(w.method + "/Send")
+	span := w.startSpan(w.method + "/Send")
 	defer span.End()
 	
 	err := w.ServerStream.SendMsg(m)
@@ -186,7 +200,7 @@ func (w *bidiStreamWrapper{{ .Name }}) Send(m *{{ .Response }}) error {
 
 func (w *bidiStreamWrapper{{ .Name }}) Recv() (*{{ .Request }}, error) {
 	start := time.Now()
-	span := w.ctx.Trace(w.method + "/Recv")
+	span := w.startSpan(w.method + "/Recv")
 	defer span.End()
 	
 	var req {{ .Request }}
@@ -201,7 +215,7 @@ func (w *bidiStreamWrapper{{ .Name }}) Recv() (*{{ .Request }}, error) {
 
 func (w *bidiStreamWrapper{{ .Name }}) CloseSend() error {
 	start := time.Now()
-	span := w.ctx.Trace(w.method + "/CloseSend")
+	span := w.startSpan(w.method + "/CloseSend")
 	defer span.End()
 
 	err := w.ServerStream.(grpc.ClientStream).CloseSend()
