@@ -1,6 +1,8 @@
 package wrap
 
 import (
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 
@@ -71,6 +73,36 @@ func TestGenerateGoFrServerWrapper_Naming(t *testing.T) {
 	for _, s := range []string{"NewHelloGoFrServer", "HelloServerWithGofr", "HelloServerWrapper", "RegisterHelloServerWithGofr"} {
 		assert.NotContains(t, out, s, "old Server-suffixed CLI name must not remain")
 	}
+}
+
+// Stream Send/Recv often run on a goroutine the handler started while the handler still uses
+// its *gofr.Context. ctx.Trace replaces that Context's context in place, which is a data race
+// (gofr-dev/gofr#3823), so the stream wrappers must start spans without assigning them back.
+func TestGenerateGoFrServerWrapper_StreamSpansDoNotMutateContext(t *testing.T) {
+	out := generateGoFrServerWrapper(createTestContext(), testWrapperData())
+
+	assert.Contains(t, out, "func (s *instrumentedStream) startSpan(name string) trace.Span {")
+	assert.Contains(t, out, `"go.opentelemetry.io/otel"`)
+	assert.Contains(t, out, `"go.opentelemetry.io/otel/trace"`)
+
+	for _, s := range []string{"s.ctx.Trace(", "w.ctx.Trace("} {
+		assert.NotContains(t, out, s, "a stream wrapper must not call Trace on the shared Context")
+	}
+
+	_, err := parser.ParseFile(token.NewFileSet(), "hello_gofr.go", out, 0)
+	assert.NoError(t, err, "generated wrapper must parse")
+}
+
+// A service without streaming methods has no stream wrapper, so it must not import otel
+// (an unused import does not compile).
+func TestGenerateGoFrServerWrapper_UnaryOnlyHasNoOtelImport(t *testing.T) {
+	data := testWrapperData()
+	data.Methods = data.Methods[:1] // SayHello only
+
+	out := generateGoFrServerWrapper(createTestContext(), data)
+
+	assert.NotContains(t, out, "instrumentedStream")
+	assert.NotContains(t, out, "go.opentelemetry.io/otel")
 }
 
 // The server scaffold users edit must expose the renamed struct + usage hint.
